@@ -19,6 +19,8 @@ services:
     build: .
     restart: unless-stopped
     env_file: .env
+    environment:
+      DATABASE_URL: postgresql+asyncpg://etanetas:${DB_PASSWORD}@db:5432/etanetas_addresses_coverage
     ports:
       - "8000:8000"
     depends_on:
