@@ -8,3 +8,9 @@ wheels/
 
 # Virtual environments
 .venv
+
+# Env files
+.env
+.env.local
+
+workflow.txt
