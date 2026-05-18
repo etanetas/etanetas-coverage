@@ -1,9 +1,0 @@
-{
-  "permissions": {
-    "allow": [
-      "Bash(New-Item -ItemType File -Path \"C:\\\\Users\\\\vasil\\\\Documents\\\\Workspace\\\\etanetas-address-service-map\\\\app\\\\__init__.py\" -Force)",
-      "Bash(Out-Null)",
-      "PowerShell(New-Item -ItemType File -Path \"C:\\\\Users\\\\vasil\\\\Documents\\\\Workspace\\\\etanetas-address-service-map\\\\app\\\\__init__.py\" -Force)"
-    ]
-  }
-}
