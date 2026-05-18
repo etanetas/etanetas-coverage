@@ -14,3 +14,4 @@ wheels/
 .env.local
 
 workflow.txt
+.claude/settings.local.json
