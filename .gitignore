@@ -15,3 +15,6 @@ wheels/
 
 workflow.txt
 .claude/settings.local.json
+
+# ETL state / cache
+etl/state/
