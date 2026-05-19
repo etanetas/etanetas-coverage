@@ -1,3 +1,9 @@
+"""Spinta API client (get.data.gov.lt).
+
+Used by nightly_sync to fetch incremental changes via the ``/:changes/<cid>`` endpoint,
+and by full_import for the head ``_cid`` lookup.
+"""
+
 import asyncio
 import logging
 from collections.abc import AsyncIterator
@@ -6,12 +12,15 @@ from urllib.parse import quote
 import httpx
 
 from etl.config import settings
+from etl.utils.retry import with_exponential_backoff
 
 log = logging.getLogger(__name__)
 
-_TIMEOUT = httpx.Timeout(120.0, connect=10.0)
-_MAX_RETRIES = 10
-
+_TIMEOUT = httpx.Timeout(
+    settings.spinta_timeout_seconds,
+    connect=settings.spinta_connect_timeout_seconds,
+)
+_MAX_RETRIES = settings.spinta_max_retries
 
 _RETRYABLE = (
     httpx.ReadTimeout,
@@ -24,41 +33,39 @@ _RETRYABLE = (
 
 
 async def _get_with_retry(client: httpx.AsyncClient, url: str) -> httpx.Response:
-    for attempt in range(_MAX_RETRIES):
-        try:
-            response = await client.get(url)
-            if response.status_code >= 500:
-                raise httpx.HTTPStatusError(
-                    f"server {response.status_code}", request=response.request, response=response
-                )
-            response.raise_for_status()
-            return response
-        except _RETRYABLE as e:
-            if isinstance(e, asyncio.CancelledError):
-                task = asyncio.current_task()
-                if task is not None and task.cancelling() > 0:
-                    raise  # genuine Ctrl+C / task cancel
-            if attempt == _MAX_RETRIES - 1:
-                raise
-            wait = 2**attempt
-            log.warning(
-                "retry %d/%d after %s, waiting %ds",
-                attempt + 1,
-                _MAX_RETRIES,
-                type(e).__name__,
-                wait,
+    """GET :url: with exponential backoff. Treats 5xx as retryable."""
+
+    async def _attempt() -> httpx.Response:
+        response = await client.get(url)
+        if response.status_code >= 500:
+            raise httpx.HTTPStatusError(
+                f"server {response.status_code}",
+                request=response.request,
+                response=response,
             )
-            await asyncio.sleep(wait)
-    raise RuntimeError("unreachable")
+        response.raise_for_status()
+        return response
+
+    return await with_exponential_backoff(
+        _attempt,
+        max_retries=_MAX_RETRIES,
+        retryable_exceptions=_RETRYABLE,
+        operation_name=f"GET {url}",
+    )
 
 
 class SpintaClient:
+    """Async client for the Spinta open data API."""
+
     def __init__(self, base_url: str = settings.spinta_base_url):
         self.base_url = base_url
 
-    async def fetch_all(self, model: str, limit: int = 5000) -> AsyncIterator[dict]:
+    async def fetch_all(
+        self, model: str, limit: int = settings.spinta_fetch_limit
+    ) -> AsyncIterator[dict]:
+        """Yield every record of :model: by paginating with ``page()`` tokens."""
         async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
-            url = f"{self.base_url}/{model}?limit({limit})"
+            url: str | None = f"{self.base_url}/{model}?limit({limit})"
             while url:
                 response = await _get_with_retry(client, url)
                 data = response.json()
@@ -75,10 +82,11 @@ class SpintaClient:
                     url = None
 
     async def fetch_changes(
-        self, model: str, since_cid: int, limit: int = 5000
+        self, model: str, since_cid: int, limit: int = settings.spinta_fetch_limit
     ) -> AsyncIterator[dict]:
+        """Yield change records of :model: starting from ``_cid >= :since_cid:``."""
         async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
-            url = f"{self.base_url}/{model}/:changes/{since_cid}?limit({limit})"
+            url: str | None = f"{self.base_url}/{model}/:changes/{since_cid}?limit({limit})"
             while url:
                 response = await _get_with_retry(client, url)
                 data = response.json()
@@ -95,12 +103,14 @@ class SpintaClient:
                     url = None
 
     async def fetch_one(self, model: str, uuid: str) -> dict | None:
+        """Fetch single record by UUID. Returns ``None`` if not found."""
         async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
             response = await _get_with_retry(client, f"{self.base_url}/{model}/{uuid}")
             data = response.json()
             return data if data.get("_id") else None
 
     async def count(self, model: str) -> int:
+        """Return total record count of :model:."""
         async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
             response = await _get_with_retry(client, f"{self.base_url}/{model}?count()")
             data = response.json()

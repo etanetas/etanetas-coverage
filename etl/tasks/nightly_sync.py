@@ -5,6 +5,7 @@ from datetime import UTC, date, datetime
 
 from app.database import AsyncSessionLocal
 from app.logging_config import configure_logging
+from etl.config import settings
 from etl.downloaders.spinta_client import SpintaClient
 from etl.loaders.incremental_load import apply_adresas_changes, apply_pastatas_changes
 from etl.notifications import send_alert
@@ -17,7 +18,7 @@ from etl.state_db import (
 
 log = logging.getLogger(__name__)
 
-_STALE_DAYS = 7
+_STALE_DAYS = settings.stale_sync_days
 _HOST = socket.gethostname()
 
 

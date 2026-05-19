@@ -209,3 +209,51 @@ class TestMapStreetAxis:
         result = map_street_axis(feat)
         assert result["rc_code"] == 1122775
         assert json.loads(result["geom"]) == geom
+
+
+# ============================================================================
+# Graceful skip on malformed rows — all mappers must return None + WARNING
+# (not raise) so a single bad row doesn't abort the whole import.
+# ============================================================================
+
+
+class TestGracefulSkipOnMalformedRows:
+    def test_county_csv_missing_adm_kodas(self):
+        assert map_county_csv({"VARDAS_K": "X"}) is None
+
+    def test_county_csv_non_int_adm_kodas(self):
+        assert map_county_csv({"ADM_KODAS": "abc", "VARDAS_K": "X"}) is None
+
+    def test_municipality_csv_missing_sav_kodas(self):
+        assert map_municipality_csv({"ADM_KODAS": "1", "VARDAS_K": "X", "TIPAS": "sav"}) is None
+
+    def test_locality_csv_missing_gyv_kodas(self):
+        assert map_locality_csv({"SAV_KODAS": "1", "VARDAS_K": "X", "TIPAS": "k"}) is None
+
+    def test_street_csv_missing_gat_kodas(self):
+        assert map_street_csv({"GYV_KODAS": "1", "VARDAS_K": "X"}) is None
+
+    def test_address_csv_missing_aob_kodas(self):
+        row = {"GYV_KODAS": "1", "NR": "5", "GAT_KODAS": "10"}
+        assert map_address_csv(row, {}) is None
+
+    def test_address_csv_non_int_aob_kodas(self):
+        row = {"AOB_KODAS": "not-int", "GYV_KODAS": "1", "NR": "5"}
+        assert map_address_csv(row, {}) is None
+
+    def test_premises_csv_missing_pat_kodas(self):
+        stat_lookup = {123: {"locality_code": 1, "street_code": 1, "postal_code": "X"}}
+        row = {"AOB_KODAS": "123", "PATALPOS_NR": "5"}  # missing PAT_KODAS
+        assert map_premises_csv(row, stat_lookup, {}) is None
+
+    def test_premises_csv_non_int_aob(self):
+        row = {"PAT_KODAS": "1", "AOB_KODAS": "abc", "PATALPOS_NR": "5"}
+        assert map_premises_csv(row, {}, {}) is None
+
+    def test_locality_boundary_missing_gyv_kodas(self):
+        feat = {"properties": {}, "geometry": {"type": "Polygon"}}
+        assert map_locality_boundary(feat) is None
+
+    def test_street_axis_missing_geometry(self):
+        feat = {"properties": {"GAT_KODAS": 1}}  # no geometry key
+        assert map_street_axis(feat) is None

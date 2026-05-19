@@ -1,3 +1,11 @@
+"""ETL state persistence in the ``etl_state`` table.
+
+Stores three keys:
+ - ``adresai_cid``: last Spinta ``_cid`` processed (cursor for nightly sync)
+ - ``full_import_step``: last completed step of full_import (resume checkpoint)
+ - ``last_nightly_sync_date``: ISO date of last successful nightly sync (idempotency)
+"""
+
 from datetime import UTC, datetime
 
 from sqlalchemy.dialects.postgresql import insert as pg_insert
@@ -5,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 
 from app.models.etl_state import EtlState
+from etl.utils.time import utcnow_naive
 
 _CID_KEY = "adresai_cid"
 _STEP_KEY = "full_import_step"
@@ -25,19 +34,16 @@ IMPORT_STEPS = [
 ]
 
 
-def _now() -> datetime:
-    return datetime.now(UTC).replace(tzinfo=None)
-
-
 async def _get(session: AsyncSession, key: str) -> str | None:
     return await session.scalar(select(EtlState.value).where(EtlState.key == key))
 
 
 async def _set(session: AsyncSession, key: str, value: str) -> None:
-    stmt = pg_insert(EtlState).values(key=key, value=value, updated_at=_now())
+    now = utcnow_naive()
+    stmt = pg_insert(EtlState).values(key=key, value=value, updated_at=now)
     stmt = stmt.on_conflict_do_update(
         index_elements=["key"],
-        set_={"value": value, "updated_at": _now()},
+        set_={"value": value, "updated_at": now},
     )
     await session.execute(stmt)
     await session.commit()

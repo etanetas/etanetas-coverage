@@ -5,9 +5,11 @@ from typing import Any
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from etl.config import settings
+
 log = logging.getLogger(__name__)
 
-_BATCH_SIZE = 1000
+_BATCH_SIZE = settings.geometry_batch_size
 
 # ST_Multi ensures LineString→MultiLineString and Polygon→MultiPolygon
 # ST_Transform converts LKS-94 (EPSG:3346) → WGS84 (EPSG:4326)
@@ -26,24 +28,40 @@ _UPDATE_SQL = {
 async def update_geometries(
     session: AsyncSession,
     table: str,
-    rows: Iterator[dict[str, Any]],
+    rows: Iterator[dict[str, Any] | None],
 ) -> int:
+    """Apply geometry UPDATE in batches. ``None`` rows are skipped silently.
+
+    Raises ``KeyError`` if :table: is not in ``_UPDATE_SQL`` (programmer error).
+    """
+    if table not in _UPDATE_SQL:
+        raise KeyError(f"unknown geometry table: {table}")
     stmt = _UPDATE_SQL[table]
     batch: list[dict[str, Any]] = []
     total = 0
 
     for row in rows:
+        if row is None:  # mapper rejected this row (logged WARNING already)
+            continue
         batch.append(row)
         if len(batch) >= _BATCH_SIZE:
-            await session.execute(stmt, batch)
-            await session.commit()
+            try:
+                await session.execute(stmt, batch)
+                await session.commit()
+            except Exception as exc:
+                log.error("Geometry batch UPDATE on %s failed: %s", table, exc)
+                raise
             total += len(batch)
             log.info("  %s geometry: %d rows", table, total)
             batch.clear()
 
     if batch:
-        await session.execute(stmt, batch)
-        await session.commit()
+        try:
+            await session.execute(stmt, batch)
+            await session.commit()
+        except Exception as exc:
+            log.error("Final geometry batch UPDATE on %s failed: %s", table, exc)
+            raise
         total += len(batch)
 
     return total

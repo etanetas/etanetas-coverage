@@ -1,16 +1,34 @@
-import asyncio
+"""Downloader for RC (registrucentras.lt) monthly GeoJSON files.
+
+Used to load locality boundaries (MULTIPOLYGON) and street axes (MULTILINESTRING).
+Source coordinates are in LKS-94 (EPSG:3346); ST_Transform converts to WGS84 in DB.
+"""
+
 import logging
 from collections.abc import Iterator
 from pathlib import Path
+from typing import Any
 
 import httpx
 import ijson
 
+from etl.config import settings
+from etl.utils.download import stream_to_file
+from etl.utils.retry import with_exponential_backoff
+
 log = logging.getLogger(__name__)
 
-_TIMEOUT = httpx.Timeout(300.0, connect=10.0)
-_MAX_RETRIES = 5
-_CHUNK_SIZE = 65536
+_TIMEOUT = httpx.Timeout(
+    settings.rc_download_timeout_seconds,
+    connect=settings.rc_download_connect_timeout_seconds,
+)
+_MAX_RETRIES = settings.rc_download_max_retries
+
+_RETRYABLE_DOWNLOAD = (
+    httpx.TimeoutException,
+    httpx.ReadError,
+    httpx.RemoteProtocolError,
+)
 
 RC_GEOJSON_URLS = {
     "localities_boundary": "https://www.registrucentras.lt/aduomenys/?byla=adr_gra_gyvenamosios_vietoves.json",
@@ -19,57 +37,44 @@ RC_GEOJSON_URLS = {
 
 
 class RCGeoJsonClient:
-    def __init__(self, cache_dir: Path = Path("etl/state/cache")):
-        self.cache_dir = cache_dir
+    """Downloads named RC GeoJSON files to a local cache dir, streams features via ijson."""
+
+    def __init__(self, cache_dir: Path | None = None):
+        self.cache_dir = cache_dir or Path(settings.etl_cache_dir)
 
     async def download(self, name: str) -> Path:
+        """Download :name: GeoJSON to cache (re-use existing file if present)."""
         url = RC_GEOJSON_URLS[name]
         self.cache_dir.mkdir(parents=True, exist_ok=True)
         dest = self.cache_dir / f"rc_{name}.json"
+
         if dest.exists():
             log.info("using cached %s", dest.name)
             return dest
 
         log.info("downloading %s from RC ...", name)
-        for attempt in range(_MAX_RETRIES):
-            try:
-                await self._stream_to_file(url, dest)
-                return dest
-            except (httpx.TimeoutException, httpx.ReadError, httpx.RemoteProtocolError) as e:
-                if attempt == _MAX_RETRIES - 1:
-                    raise
-                wait = 2**attempt
-                log.warning(
-                    "retry %d/%d after %s, waiting %ds",
-                    attempt + 1,
-                    _MAX_RETRIES,
-                    type(e).__name__,
-                    wait,
-                )
-                await asyncio.sleep(wait)
-        raise RuntimeError("unreachable")
 
-    async def _stream_to_file(self, url: str, dest: Path) -> None:
-        async with httpx.AsyncClient(timeout=_TIMEOUT, follow_redirects=True) as client:
-            async with client.stream("GET", url) as response:
-                response.raise_for_status()
-                total = int(response.headers.get("content-length", 0))
-                downloaded = 0
-                with dest.open("wb") as f:
-                    async for chunk in response.aiter_bytes(_CHUNK_SIZE):
-                        f.write(chunk)
-                        downloaded += len(chunk)
-                        if total and downloaded % (10 * 1024 * 1024) < _CHUNK_SIZE:
-                            pct = 100 * downloaded // total
-                            log.info(
-                                "%s: %d MB / %d MB (%d%%)",
-                                dest.name,
-                                downloaded // (1024 * 1024),
-                                total // (1024 * 1024),
-                                pct,
-                            )
+        async def _download() -> None:
+            async with httpx.AsyncClient(timeout=_TIMEOUT, follow_redirects=True) as client:
+                await stream_to_file(client, url, dest)
 
-    def iter_features(self, path: Path) -> Iterator[dict]:
+        await with_exponential_backoff(
+            _download,
+            max_retries=_MAX_RETRIES,
+            retryable_exceptions=_RETRYABLE_DOWNLOAD,
+            operation_name=f"download {name}",
+        )
+        return dest
+
+    def iter_features(self, path: Path) -> Iterator[dict[str, Any]]:
+        """Stream GeoJSON ``features[]`` array using ijson (constant memory)."""
         log.info("parsing %s ...", path.name)
-        with path.open("rb") as fp:
-            yield from ijson.items(fp, "features.item", use_float=True)
+        try:
+            with path.open("rb") as fp:
+                yield from ijson.items(fp, "features.item", use_float=True)
+        except FileNotFoundError:
+            log.error("GeoJSON file not found: %s", path)
+            raise
+        except ijson.JSONError as exc:
+            log.error("GeoJSON %s parse error: %s", path, exc)
+            raise

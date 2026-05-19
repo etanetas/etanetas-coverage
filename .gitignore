@@ -29,3 +29,7 @@ etl/state/
 .ruff_cache/
 .pre-commit-config.yaml
 
+.pytest_cache/
+.claude/
+# viewer/
+
