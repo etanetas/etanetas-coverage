@@ -1,7 +1,10 @@
-from datetime import datetime, timezone
+import json
+from datetime import UTC, datetime
+from typing import Any
+
 
 def _now() -> datetime:
-    return datetime.now(timezone.utc).replace(tzinfo=None)
+    return datetime.now(UTC).replace(tzinfo=None)
 
 
 def map_county(r: dict) -> dict:
@@ -64,6 +67,7 @@ def map_address(
 
 # --- RC CSV mappers (full_import via registrucentras.lt files) ---
 
+
 def map_county_csv(row: dict) -> dict:
     return {
         "rc_code": int(row["ADM_KODAS"]),
@@ -114,4 +118,47 @@ def map_address_csv(row: dict, point_lookup: dict[int, str]) -> dict:
         "point": point_lookup.get(rc_code),
         "synced_at": _now(),
         "deleted_at": None,
+    }
+
+
+# stat_lookup value type
+StatInfo = dict  # {"locality_code": int, "street_code": int|None, "postal_code": str|None, "point": str|None}
+
+
+def map_premises_csv(
+    row: dict,
+    stat_lookup: dict[int, StatInfo],
+    point_lookup: dict[int, str],
+) -> dict | None:
+    parent_aob = int(row["AOB_KODAS"])
+    parent = stat_lookup.get(parent_aob)
+    if parent is None:
+        return None  # lokal bez budynku-rodzica w danych — pomijamy
+    rc_code = int(row["PAT_KODAS"])
+    return {
+        "rc_code": rc_code,
+        "street_code": parent["street_code"],
+        "locality_code": parent["locality_code"],
+        "house_no": row["PATALPOS_NR"],
+        "postal_code": parent["postal_code"],
+        "point": point_lookup.get(parent_aob),
+        "synced_at": _now(),
+        "deleted_at": None,
+    }
+
+
+# --- Geometry mappers (GeoJSON LKS-94 → geometry update rows) ---
+
+
+def map_locality_boundary(feat: dict) -> dict[str, Any]:
+    return {
+        "rc_code": int(feat["properties"]["GYV_KODAS"]),
+        "geom": json.dumps(feat["geometry"]),
+    }
+
+
+def map_street_axis(feat: dict) -> dict[str, Any]:
+    return {
+        "rc_code": int(feat["properties"]["GAT_KODAS"]),
+        "geom": json.dumps(feat["geometry"]),
     }

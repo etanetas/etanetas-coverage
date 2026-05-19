@@ -1,10 +1,10 @@
 import asyncio
-import csv
 import logging
 from collections.abc import Iterator
 from pathlib import Path
 
 import httpx
+import ijson
 
 log = logging.getLogger(__name__)
 
@@ -12,24 +12,20 @@ _TIMEOUT = httpx.Timeout(300.0, connect=10.0)
 _MAX_RETRIES = 5
 _CHUNK_SIZE = 65536
 
-RC_CSV_URLS = {
-    "counties": "https://www.registrucentras.lt/aduomenys/?byla=adr_apskritys.csv",
-    "municipalities": "https://www.registrucentras.lt/aduomenys/?byla=adr_savivaldybes.csv",
-    "premises": "https://www.registrucentras.lt/aduomenys/?byla=adr_pat_lr.csv",
-    "localities": "https://www.registrucentras.lt/aduomenys/?byla=adr_gyvenamosios_vietoves.csv",
-    "streets": "https://www.registrucentras.lt/aduomenys/?byla=adr_gatves.csv",
-    "addresses": "https://www.registrucentras.lt/aduomenys/?byla=adr_stat_lr.csv",
+RC_GEOJSON_URLS = {
+    "localities_boundary": "https://www.registrucentras.lt/aduomenys/?byla=adr_gra_gyvenamosios_vietoves.json",
+    "streets_axis": "https://www.registrucentras.lt/aduomenys/?byla=adr_gra_gatves.json",
 }
 
 
-class RCCsvClient:
+class RCGeoJsonClient:
     def __init__(self, cache_dir: Path = Path("etl/state/cache")):
         self.cache_dir = cache_dir
 
     async def download(self, name: str) -> Path:
-        url = RC_CSV_URLS[name]
+        url = RC_GEOJSON_URLS[name]
         self.cache_dir.mkdir(parents=True, exist_ok=True)
-        dest = self.cache_dir / f"rc_{name}.csv"
+        dest = self.cache_dir / f"rc_{name}.json"
         if dest.exists():
             log.info("using cached %s", dest.name)
             return dest
@@ -63,7 +59,7 @@ class RCCsvClient:
                     async for chunk in response.aiter_bytes(_CHUNK_SIZE):
                         f.write(chunk)
                         downloaded += len(chunk)
-                        if total and downloaded % (5 * 1024 * 1024) < _CHUNK_SIZE:
+                        if total and downloaded % (10 * 1024 * 1024) < _CHUNK_SIZE:
                             pct = 100 * downloaded // total
                             log.info(
                                 "%s: %d MB / %d MB (%d%%)",
@@ -73,7 +69,7 @@ class RCCsvClient:
                                 pct,
                             )
 
-    def iter_rows(self, csv_path: Path) -> Iterator[dict]:
-        with csv_path.open(encoding="utf-8-sig") as f:
-            reader = csv.DictReader(f, delimiter="|")
-            yield from reader
+    def iter_features(self, path: Path) -> Iterator[dict]:
+        log.info("parsing %s ...", path.name)
+        with path.open("rb") as fp:
+            yield from ijson.items(fp, "features.item", use_float=True)

@@ -151,6 +151,67 @@ app/
     └── admin.py     # User, ApiKey, BulkOperations, AuditLog
 ```
 
+## ETL — Address data import
+
+Address data comes from [Registrų centras](https://www.registrucentras.lt) (CC BY 4.0). Add attribution to the public site: *„Adresų duomenys: VĮ Registrų centras (CC BY 4.0)"*
+
+### Initial import (run once at deploy)
+
+Downloads ~300 MB of RC files to `etl/state/cache/`, loads ~2.3M addresses into DB.
+
+```bash
+uv run python -m etl.tasks.full_import
+```
+
+Duration: ~10–15 min. Resumes automatically if interrupted (checkpoint saved in `etl_state` table).
+
+### Nightly sync (cron `0 2 * * *`)
+
+Fetches only changes from Spinta API since last run. Takes seconds to minutes.
+
+```bash
+uv run python -m etl.tasks.nightly_sync
+```
+
+### Monthly full resync (cron `0 3 1 * *`)
+
+Safety net — re-downloads fresh RC files, re-upserts everything, marks removed addresses as `deleted_at`.
+
+```bash
+uv run python -m etl.tasks.monthly_full_resync
+```
+
+### Cron setup (production)
+
+Nightly sync has 3 scheduled attempts (+4h, +8h) for resilience. Each run checks if sync already succeeded today — later attempts exit immediately if the earlier one succeeded.
+
+```cron
+# Nightly sync — primary attempt
+0 2 * * *   cd /app && uv run python -m etl.tasks.nightly_sync >> /var/log/etanetas/nightly.log 2>&1
+# Nightly sync — retry +4h (runs only if 02:00 failed)
+0 6 * * *   cd /app && uv run python -m etl.tasks.nightly_sync >> /var/log/etanetas/nightly.log 2>&1
+# Nightly sync — retry +8h (runs only if 06:00 failed)
+0 10 * * *  cd /app && uv run python -m etl.tasks.nightly_sync >> /var/log/etanetas/nightly.log 2>&1
+# Monthly full resync — 1st of each month at 03:00
+0 3 1 * *   cd /app && uv run python -m etl.tasks.monthly_full_resync >> /var/log/etanetas/monthly.log 2>&1
+```
+
+### Environment variables (ETL)
+
+| Variable | Default | Description |
+|---|---|---|
+| `SPINTA_BASE_URL` | `https://get.data.gov.lt/datasets/gov/rc/ar` | Spinta API base |
+| `RC_GEOJSON_URL` | `https://www.registrucentras.lt/aduomenys/?byla=adr_gra_adresai_LT.zip` | Address points ZIP |
+| `TELEGRAM_BOT_TOKEN` | *(empty)* | Telegram bot token for failure alerts (optional) |
+| `TELEGRAM_CHAT_ID` | *(empty)* | Telegram chat/group ID for alerts (optional) |
+
+### ETL state
+
+| Key in `etl_state` | Value | Description |
+|---|---|---|
+| `adresai_cid` | integer | Last processed Spinta `_cid` — used by nightly sync |
+| `full_import_step` | step name | Checkpoint for resume after interrupted import |
+
 ## Development
 
 ```bash

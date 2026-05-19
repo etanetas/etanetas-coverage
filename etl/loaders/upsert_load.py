@@ -1,12 +1,16 @@
-from typing import AsyncIterator
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.dialects.postgresql import insert
+import logging
+from collections.abc import AsyncIterator
+from typing import Any
 
+from sqlalchemy.dialects.postgresql import insert
+from sqlalchemy.ext.asyncio import AsyncSession
+
+log = logging.getLogger(__name__)
 
 _MAX_PG_PARAMS = 32767
 
 
-async def upsert_batch(session: AsyncSession, model: type, rows: list[dict]) -> None:
+async def upsert_batch(session: AsyncSession, model: type, rows: list[dict[str, Any]]) -> None:
     chunk_size = _MAX_PG_PARAMS // len(rows[0])
     for i in range(0, len(rows), chunk_size):
         chunk = rows[i : i + chunk_size]
@@ -24,10 +28,10 @@ async def upsert_batch(session: AsyncSession, model: type, rows: list[dict]) -> 
 async def upsert_all(
     session: AsyncSession,
     model: type,
-    records: AsyncIterator[dict],
+    records: AsyncIterator[dict[str, Any]],
     batch_size: int = 10_000,
 ) -> int:
-    batch: list[dict] = []
+    batch: list[dict[str, Any]] = []
     total = 0
     async for row in records:
         batch.append(row)
@@ -35,7 +39,7 @@ async def upsert_all(
             await upsert_batch(session, model, batch)
             await session.commit()
             total += len(batch)
-            print(f"  {model.__tablename__}: {total} rows")
+            log.info("  %s: %d rows", model.__tablename__, total)
             batch.clear()
     if batch:
         await upsert_batch(session, model, batch)

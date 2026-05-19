@@ -1,10 +1,13 @@
 import asyncio
+import logging
 import zipfile
+from collections.abc import Iterator
 from pathlib import Path
-from typing import Iterator
 
 import httpx
 import ijson
+
+log = logging.getLogger(__name__)
 
 _TIMEOUT = httpx.Timeout(300.0, connect=10.0)
 _MAX_RETRIES = 5
@@ -20,10 +23,10 @@ class RCZipFallback:
         self.cache_dir.mkdir(parents=True, exist_ok=True)
         zip_path = self.cache_dir / "adr_gra_adresai_LT.zip"
         if zip_path.exists():
-            print(f"  using cached ZIP: {zip_path}")
+            log.info("using cached ZIP: %s", zip_path)
             return zip_path
 
-        print(f"  downloading {self.url} ...")
+        log.info("downloading %s ...", self.url)
         for attempt in range(_MAX_RETRIES):
             try:
                 await self._stream_to_file(zip_path)
@@ -31,8 +34,14 @@ class RCZipFallback:
             except (httpx.TimeoutException, httpx.ReadError, httpx.RemoteProtocolError) as e:
                 if attempt == _MAX_RETRIES - 1:
                     raise
-                wait = 2 ** attempt
-                print(f"  retry {attempt + 1}/{_MAX_RETRIES} after {type(e).__name__}, waiting {wait}s")
+                wait = 2**attempt
+                log.warning(
+                    "retry %d/%d after %s, waiting %ds",
+                    attempt + 1,
+                    _MAX_RETRIES,
+                    type(e).__name__,
+                    wait,
+                )
                 await asyncio.sleep(wait)
         raise RuntimeError("unreachable")
 
@@ -48,7 +57,12 @@ class RCZipFallback:
                         downloaded += len(chunk)
                         if total and downloaded % (10 * 1024 * 1024) < _CHUNK_SIZE:
                             pct = 100 * downloaded // total
-                            print(f"  download: {downloaded // (1024*1024)} MB / {total // (1024*1024)} MB ({pct}%)")
+                            log.info(
+                                "download: %d MB / %d MB (%d%%)",
+                                downloaded // (1024 * 1024),
+                                total // (1024 * 1024),
+                                pct,
+                            )
 
     def iter_features(self, zip_path: Path) -> Iterator[dict]:
         with zipfile.ZipFile(zip_path) as zf:
@@ -57,6 +71,6 @@ class RCZipFallback:
             )
             if geojson_name is None:
                 raise FileNotFoundError(f"no .geojson/.json found in {zip_path}")
-            print(f"  parsing {geojson_name} ...")
+            log.info("parsing %s ...", geojson_name)
             with zf.open(geojson_name) as fp:
                 yield from ijson.items(fp, "features.item")
