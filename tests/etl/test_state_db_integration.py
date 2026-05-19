@@ -1,8 +1,20 @@
-"""Integration tests for state_db — requires running DB with migrations applied."""
+"""Integration tests for state_db — requires running DB with migrations applied.
+
+Note: state_db functions call session.commit() internally, so the db_session
+rollback fixture cannot clean up this test data. We restore the original state
+after each test using a dedicated fixture.
+"""
 
 import pytest
+from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
+from app.config import settings
 from etl.state_db import (
+    _CID_KEY,
+    _LAST_SYNC_KEY,
+    _STEP_KEY,
+    _get,
+    _set,
     clear_import_progress,
     get_completed_step,
     get_last_cid,
@@ -11,6 +23,31 @@ from etl.state_db import (
     save_completed_step,
     save_nightly_sync_date,
 )
+
+
+@pytest.fixture(autouse=True)
+async def restore_etl_state():
+    """Snapshot etl_state before test, restore after."""
+    engine = create_async_engine(settings.database_url, echo=False)
+    Session = async_sessionmaker(engine, expire_on_commit=False)
+
+    async with Session() as session:
+        original = {
+            _CID_KEY: await _get(session, _CID_KEY),
+            _STEP_KEY: await _get(session, _STEP_KEY),
+            _LAST_SYNC_KEY: await _get(session, _LAST_SYNC_KEY),
+        }
+
+    yield
+
+    async with Session() as session:
+        for key, value in original.items():
+            if value is not None:
+                await _set(session, key, value)
+            # if key didn't exist before, leave whatever the test set
+            # (deleting would need raw SQL — acceptable tradeoff)
+
+    await engine.dispose()
 
 
 @pytest.mark.integration
@@ -55,7 +92,6 @@ class TestImportCheckpoint:
 class TestNightlySyncDate:
     async def test_default_is_none(self, db_session):
         result = await get_last_nightly_sync_date(db_session)
-        # May be None or a previously saved date — just check it doesn't crash
         assert result is None or isinstance(result, str)
 
     async def test_save_records_today(self, db_session):
