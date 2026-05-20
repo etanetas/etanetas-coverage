@@ -20,6 +20,7 @@ dependencies = [
     "opentelemetry-instrumentation-fastapi>=0.46b0",
     "opentelemetry-instrumentation-sqlalchemy>=0.46b0",
     "opentelemetry-exporter-otlp-proto-grpc>=1.25.0",
+    "slowapi>=0.1.9",
 ]
 
 [dependency-groups]

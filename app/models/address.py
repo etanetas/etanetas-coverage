@@ -36,7 +36,9 @@ class Locality(Base):
     rc_code: Mapped[int] = mapped_column(primary_key=True)
     muni_code: Mapped[int] = mapped_column(ForeignKey("municipalities.rc_code"))
     name: Mapped[str] = mapped_column(Text)
+    name_k: Mapped[str | None] = mapped_column(Text)
     type: Mapped[str] = mapped_column(Text)
+    type_abbr: Mapped[str | None] = mapped_column(Text)
     boundary: Mapped[str | None] = mapped_column(Geometry("MULTIPOLYGON", srid=4326))
     synced_at: Mapped[datetime] = mapped_column(TIMESTAMP, default=datetime.now)
 
@@ -52,6 +54,7 @@ class Street(Base):
     locality_code: Mapped[int] = mapped_column(ForeignKey("localities.rc_code"))
     name: Mapped[str] = mapped_column(Text)
     full_name: Mapped[str] = mapped_column(Text)
+    type_abbr: Mapped[str | None] = mapped_column(Text)
     axis: Mapped[str | None] = mapped_column(Geometry("MULTILINESTRING", srid=4326))
     synced_at: Mapped[datetime] = mapped_column(TIMESTAMP, default=datetime.now)
 
@@ -68,7 +71,9 @@ class Address(Base):
     street_code: Mapped[int | None] = mapped_column(ForeignKey("streets.rc_code"))
     locality_code: Mapped[int] = mapped_column(ForeignKey("localities.rc_code"))
     house_no: Mapped[str] = mapped_column(Text)
+    corpus_no: Mapped[str | None] = mapped_column(Text)
     postal_code: Mapped[str | None] = mapped_column(Text)
+    address_type: Mapped[str] = mapped_column(Text, default="building")
     point: Mapped[str | None] = mapped_column(Geometry("POINT", srid=4326))
     synced_at: Mapped[datetime] = mapped_column(TIMESTAMP, default=datetime.now)
     deleted_at: Mapped[datetime | None] = mapped_column(TIMESTAMP)

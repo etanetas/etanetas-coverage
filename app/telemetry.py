@@ -15,7 +15,9 @@ def configure_telemetry(app, engine) -> None:
     OTEL_EXPORTER=otlp     — send to OTLP endpoint (set OTEL_EXPORTER_OTLP_ENDPOINT)
     OTEL_EXPORTER=none     — disable tracing
     """
-    exporter_type = os.getenv("OTEL_EXPORTER", "console").lower()
+    from app.config import settings
+
+    exporter_type = settings.otel_exporter.lower()
     if exporter_type == "none":
         return
 
@@ -35,4 +37,4 @@ def configure_telemetry(app, engine) -> None:
     trace.set_tracer_provider(provider)
 
     FastAPIInstrumentor.instrument_app(app)
-    SQLAlchemyInstrumentor().instrument(engine=engine)
+    SQLAlchemyInstrumentor().instrument(engine=engine.sync_engine)

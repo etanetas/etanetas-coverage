@@ -64,6 +64,7 @@ class TestMapLocalityCsv:
         row = {
             "GYV_KODAS": "10001",
             "SAV_KODAS": "56",
+            "VARDAS": "Abakai",
             "VARDAS_K": "Abakų",
             "TIPAS": "kaimas",
             "TIPO_SANTRUMPA": "k.",
@@ -73,7 +74,10 @@ class TestMapLocalityCsv:
         result = map_locality_csv(row)
         assert result["rc_code"] == 10001
         assert result["muni_code"] == 56
+        assert result["name"] == "Abakai"
+        assert result["name_k"] == "Abakų"
         assert result["type"] == "kaimas"
+        assert result["type_abbr"] == "k."
 
 
 class TestMapStreetCsv:
@@ -90,7 +94,8 @@ class TestMapStreetCsv:
         assert result["rc_code"] == 1122775
         assert result["locality_code"] == 27713
         assert result["name"] == "Pyvesos"
-        assert result["full_name"] == "Pyvesos"
+        assert result["type_abbr"] == "g."
+        assert result["full_name"] == "Pyvesos g."
 
 
 class TestMapAddressCsv:
