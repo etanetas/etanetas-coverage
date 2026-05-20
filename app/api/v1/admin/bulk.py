@@ -39,7 +39,7 @@ _LOCALITY_LABEL = f"""
     ELSE l.name || COALESCE(' ' || l.type_abbr, '') || ', ' || ({_MUNI_SHORT}) END
 """
 _STREET_WITH_TYPE = "s.name || COALESCE(' ' || s.type_abbr, '')"
-_HOUSE = "a.house_no || COALESCE(' k.' || a.corpus_no, '')"
+_HOUSE = "a.house_no || COALESCE(' k.' || a.corpus_no, '') || COALESCE('-' || a.flat_no, '')"
 _FULL_ADDRESS = f"""
     CASE WHEN s.name IS NOT NULL
          THEN ({_STREET_WITH_TYPE}) || ' ' || ({_HOUSE}) || ', ' || ({_LOCALITY_LABEL})
@@ -120,8 +120,14 @@ async def bulk_execute(
     }
     bulk_op.affected_count = len(created_codes)
 
-    await log_action(db, current_user.id, "bulk_operation", str(bulk_op.id), "execute",
-                     {"type": op.type, "affected_count": len(created_codes)})
+    await log_action(
+        db,
+        current_user.id,
+        "bulk_operation",
+        str(bulk_op.id),
+        "execute",
+        {"type": op.type, "affected_count": len(created_codes)},
+    )
     await db.commit()
 
     return BulkExecuteResponse(bulk_operation_id=bulk_op.id, modified_count=len(created_codes))
@@ -162,8 +168,14 @@ async def bulk_rollback(
         )
 
     bulk_op.rolled_back_at = datetime.now()
-    await log_action(db, current_user.id, "bulk_operation", str(bulk_op_id), "rollback",
-                     {"rolled_back_count": len(created_codes)})
+    await log_action(
+        db,
+        current_user.id,
+        "bulk_operation",
+        str(bulk_op_id),
+        "rollback",
+        {"rolled_back_count": len(created_codes)},
+    )
     await db.commit()
 
 
@@ -172,20 +184,29 @@ async def list_bulk_operations(
     current_user: Annotated[User, Depends(require_role("viewer", "editor", "admin"))],
     db: Annotated[AsyncSession, Depends(get_db)],
 ) -> list[BulkOperationOut]:
-    rows = (await db.execute(text("""
+    rows = (
+        (
+            await db.execute(
+                text("""
         SELECT bo.id, bo.user_id, u.username, bo.operation_type,
                bo.affected_count, bo.created_at, bo.rolled_back_at
         FROM bulk_operations bo
         LEFT JOIN users u ON u.id = bo.user_id
         ORDER BY bo.created_at DESC
         LIMIT 200
-    """))).mappings().all()
+    """)
+            )
+        )
+        .mappings()
+        .all()
+    )
     return [BulkOperationOut(**r) for r in rows]
 
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 async def _filter_addresses(db: AsyncSession, f: BulkFilter) -> list[int]:
     filters = ["a.deleted_at IS NULL", "a.address_type = 'building'"]
@@ -222,8 +243,10 @@ async def _build_sample(
         FROM addresses a {_ADDR_JOINS}
         WHERE a.rc_code = ANY(:codes)
     """)
-    addr_rows = {r["rc_code"]: r["full_address"]
-                 for r in (await db.execute(addr_sql, {"codes": rc_codes})).mappings().all()}
+    addr_rows = {
+        r["rc_code"]: r["full_address"]
+        for r in (await db.execute(addr_sql, {"codes": rc_codes})).mappings().all()
+    }
 
     existing_sql = text("""
         SELECT address_code, status, max_download_mbps, max_upload_mbps
@@ -231,8 +254,16 @@ async def _build_sample(
         WHERE address_code = ANY(:codes) AND technology_id = CAST(:tech_id AS uuid)
     """)
     existing = {
-        r["address_code"]: {"status": r["status"], "max_dl_mbps": r["max_download_mbps"], "max_ul_mbps": r["max_upload_mbps"]}
-        for r in (await db.execute(existing_sql, {"codes": rc_codes, "tech_id": str(op.technology_id)})).mappings().all()
+        r["address_code"]: {
+            "status": r["status"],
+            "max_dl_mbps": r["max_download_mbps"],
+            "max_ul_mbps": r["max_upload_mbps"],
+        }
+        for r in (
+            await db.execute(existing_sql, {"codes": rc_codes, "tech_id": str(op.technology_id)})
+        )
+        .mappings()
+        .all()
     }
 
     new_state = {

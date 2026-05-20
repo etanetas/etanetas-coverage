@@ -8,6 +8,7 @@ from pydantic import BaseModel, EmailStr, Field
 # Users
 # ---------------------------------------------------------------------------
 
+
 class UserOut(BaseModel):
     id: uuid.UUID
     username: str
@@ -54,11 +55,14 @@ class ApiKeyCreated(ApiKeyOut):
 # Addresses (admin — read-only, offerings are editable)
 # ---------------------------------------------------------------------------
 
+
 class AddressSearchRequest(BaseModel):
     q: str
     locality_code: int | None = None
     street_code: int | None = None
     address_type: Literal["building", "premises"] | None = None
+    has_point: bool = False
+    has_offering: bool = False
     limit: Annotated[int, Field(ge=1, le=100)] = 20
 
 
@@ -80,6 +84,7 @@ class AddressDetail(BaseModel):
     street_name: str | None
     house_no: str
     corpus_no: str | None
+    flat_no: str | None
     lon: float | None
     lat: float | None
 
@@ -141,6 +146,7 @@ class ZoneOfferingCreate(OfferingBase):
 # Zones
 # ---------------------------------------------------------------------------
 
+
 class ZoneOut(BaseModel):
     id: uuid.UUID
     name: str
@@ -169,6 +175,7 @@ class ZoneUpdate(BaseModel):
 # ---------------------------------------------------------------------------
 # Technologies
 # ---------------------------------------------------------------------------
+
 
 class TechnologyTypeOut(BaseModel):
     id: uuid.UUID
@@ -227,6 +234,7 @@ class TechnologyUpdate(BaseModel):
 # Bulk operations
 # ---------------------------------------------------------------------------
 
+
 class BulkFilter(BaseModel):
     locality_code: int | None = None
     street_codes: list[int] | None = None
@@ -234,7 +242,9 @@ class BulkFilter(BaseModel):
     rc_codes: list[int] | None = None
 
     def is_empty(self) -> bool:
-        return not any([self.locality_code, self.street_codes, self.house_no_pattern, self.rc_codes])
+        return not any(
+            [self.locality_code, self.street_codes, self.house_no_pattern, self.rc_codes]
+        )
 
 
 class AddOfferingOperation(BaseModel):

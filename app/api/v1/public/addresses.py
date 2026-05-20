@@ -30,7 +30,7 @@ _ADDR_JOINS = """
     JOIN municipalities m ON m.rc_code = l.muni_code
 """
 
-_HOUSE = "a.house_no || COALESCE(' k.' || a.corpus_no, '')"
+_HOUSE = "a.house_no || COALESCE(' k.' || a.corpus_no, '') || COALESCE('-' || a.flat_no, '')"
 
 _FULL_ADDRESS = f"""
     CASE WHEN s.name IS NOT NULL
@@ -148,7 +148,13 @@ async def get_availability(
     planned = []
     for row in rows:
         if row["status"] == "available":
-            available.append({"technology": row["technology"], "max_dl_mbps": row["max_dl_mbps"], "max_ul_mbps": row["max_ul_mbps"]})
+            available.append(
+                {
+                    "technology": row["technology"],
+                    "max_dl_mbps": row["max_dl_mbps"],
+                    "max_ul_mbps": row["max_ul_mbps"],
+                }
+            )
         else:
             planned.append({"technology": row["technology"], "planned_until": row["planned_until"]})
 

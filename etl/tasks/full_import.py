@@ -176,6 +176,8 @@ async def _import_addresses(
                 "locality_code": mapped["locality_code"],
                 "street_code": mapped["street_code"],
                 "postal_code": mapped["postal_code"],
+                "house_no": mapped["house_no"],
+                "corpus_no": mapped.get("corpus_no"),
             }
             yield mapped
 

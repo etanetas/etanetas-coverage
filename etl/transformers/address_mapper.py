@@ -174,7 +174,9 @@ def map_locality_csv(row: dict[str, str]) -> dict[str, Any] | None:
         return None
 
 
-def map_street_csv(row: dict[str, str], locality_name_lookup: dict[int, str] | None = None) -> dict[str, Any] | None:
+def map_street_csv(
+    row: dict[str, str], locality_name_lookup: dict[int, str] | None = None
+) -> dict[str, Any] | None:
     """Map RC ``adr_gatves.csv`` row → Street row."""
     try:
         rc_code = int(row["GAT_KODAS"])
@@ -217,6 +219,7 @@ def map_address_csv(row: dict[str, str], point_lookup: dict[int, str]) -> dict[s
             "locality_code": int(row["GYV_KODAS"]),
             "house_no": row["NR"],
             "corpus_no": row.get("KORPUSO_NR") or None,
+            "flat_no": None,
             "postal_code": row.get("PASTO_KODAS") or None,
             "address_type": "building",
             "point": point_lookup.get(rc_code),
@@ -232,7 +235,7 @@ def map_address_csv(row: dict[str, str], point_lookup: dict[int, str]) -> dict[s
         return None
 
 
-# stat_lookup value type: {locality_code, street_code, postal_code}
+# stat_lookup value type: {locality_code, street_code, postal_code, house_no, corpus_no}
 StatInfo = dict[str, Any]
 
 
@@ -256,7 +259,9 @@ def map_premises_csv(
             "rc_code": rc_code,
             "street_code": parent["street_code"],
             "locality_code": parent["locality_code"],
-            "house_no": row["PATALPOS_NR"],
+            "house_no": parent["house_no"],
+            "corpus_no": parent.get("corpus_no"),
+            "flat_no": row["PATALPOS_NR"],
             "postal_code": parent["postal_code"],
             "address_type": "premises",
             "point": point_lookup.get(parent_aob),

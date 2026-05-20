@@ -190,6 +190,14 @@
           <option value="building">Pastatas</option>
           <option value="premises">Patalpa</option>
         </select>
+        <label class="flex items-center gap-1.5 text-xs text-slate-600 cursor-pointer select-none">
+          <input type="checkbox" x-model="fHasPoint" @change="search()" class="rounded border-slate-300"/>
+          su koord.
+        </label>
+        <label class="flex items-center gap-1.5 text-xs text-slate-600 cursor-pointer select-none">
+          <input type="checkbox" x-model="fHasOffering" @change="search()" class="rounded border-slate-300"/>
+          su pasiūlymu
+        </label>
         <div x-show="loading" class="w-4 h-4 border-2 border-blue-500 border-t-transparent rounded-full spinner"></div>
         <span x-show="addrs.length && !loading" class="text-xs text-slate-400 ml-auto" x-text="`${addrs.length} rezultatų`"></span>
       </div>
@@ -675,7 +683,7 @@ function app() { return {
   ],
 
   // ── addresses ──
-  q:'', fLocality:'', fType:'',
+  q:'', fLocality:'', fType:'', fHasPoint:false, fHasOffering:false,
   addrs:[], offerings:{}, sel:[], expanded:null,
   loading:false,
   addFor:null,
@@ -744,6 +752,8 @@ function app() { return {
       const body={q:this.q,limit:40};
       if(this.fLocality) body.locality_code=parseInt(this.fLocality);
       if(this.fType) body.address_type=this.fType;
+      if(this.fHasPoint) body.has_point=true;
+      if(this.fHasOffering) body.has_offering=true;
       this.addrs=await this.api('/api/v1/admin/addresses/search',{method:'POST',body:JSON.stringify(body)});
       // Eagerly load offerings for first 15
       for(const a of this.addrs.slice(0,15)){

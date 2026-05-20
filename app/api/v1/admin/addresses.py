@@ -30,7 +30,7 @@ _LOCALITY_LABEL = f"""
     END
 """
 _STREET_WITH_TYPE = "s.name || COALESCE(' ' || s.type_abbr, '')"
-_HOUSE = "a.house_no || COALESCE(' k.' || a.corpus_no, '')"
+_HOUSE = "a.house_no || COALESCE(' k.' || a.corpus_no, '') || COALESCE('-' || a.flat_no, '')"
 _FULL_ADDRESS = f"""
     CASE WHEN s.name IS NOT NULL
          THEN ({_STREET_WITH_TYPE}) || ' ' || ({_HOUSE}) || ', ' || ({_LOCALITY_LABEL})
@@ -65,6 +65,12 @@ async def search_addresses(
     if body.street_code:
         filters.append("a.street_code = :street_code")
         params["street_code"] = body.street_code
+    if body.has_point:
+        filters.append("a.point IS NOT NULL")
+    if body.has_offering:
+        filters.append(
+            "EXISTS (SELECT 1 FROM address_offerings ao WHERE ao.address_code = a.rc_code)"
+        )
 
     where = " AND ".join(filters)
     sql = text(f"""
@@ -107,6 +113,7 @@ async def get_address(
             ({_STREET_WITH_TYPE}) AS street_name,
             a.house_no,
             a.corpus_no,
+            a.flat_no,
             ST_X(a.point::geometry) AS lon,
             ST_Y(a.point::geometry) AS lat
         FROM addresses a
@@ -156,8 +163,14 @@ async def create_address_offering(
     )
     db.add(offering)
     await db.flush()
-    await log_action(db, current_user.id, "address_offering", str(offering.id), "create",
-                     {"address_code": rc_code, **body.model_dump()})
+    await log_action(
+        db,
+        current_user.id,
+        "address_offering",
+        str(offering.id),
+        "create",
+        {"address_code": rc_code, **body.model_dump()},
+    )
     await db.commit()
     await db.refresh(offering)
     return offering
@@ -177,8 +190,14 @@ async def update_address_offering(
         setattr(offering, field, value)
     offering.updated_at = datetime.now()
 
-    await log_action(db, current_user.id, "address_offering", str(offering_id), "update",
-                     {"address_code": offering.address_code, **changes})
+    await log_action(
+        db,
+        current_user.id,
+        "address_offering",
+        str(offering_id),
+        "update",
+        {"address_code": offering.address_code, **changes},
+    )
     await db.commit()
     await db.refresh(offering)
     return offering
@@ -193,8 +212,14 @@ async def delete_address_offering(
     offering = await _require_offering(db, offering_id)
     address_code = offering.address_code
     await db.delete(offering)
-    await log_action(db, current_user.id, "address_offering", str(offering_id), "delete",
-                     {"address_code": address_code})
+    await log_action(
+        db,
+        current_user.id,
+        "address_offering",
+        str(offering_id),
+        "delete",
+        {"address_code": address_code},
+    )
     await db.commit()
 
 
