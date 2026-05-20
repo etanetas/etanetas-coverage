@@ -1,0 +1,145 @@
+<!DOCTYPE html>
+<html lang="lt">
+<head>
+  <meta charset="UTF-8">
+  <title>Etanetas · Address Viewer</title>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+  <style>
+    html, body, #map { height: 100%; margin: 0; font-family: sans-serif; }
+    #info {
+      position: absolute; top: 10px; right: 60px; z-index: 1000;
+      background: #fff; padding: 6px 10px; border-radius: 4px;
+      font-size: 12px; box-shadow: 0 1px 5px rgba(0,0,0,0.3);
+      max-width: 320px; line-height: 1.5;
+    }
+    #info.loading { color: #888; }
+    #info.error { color: #c00; }
+  </style>
+</head>
+<body>
+<div id="map"></div>
+<div id="info" class="loading">Ładuję…</div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://unpkg.com/leaflet.heat@0.2.0/dist/leaflet-heat.js"></script>
+<script>
+// --- Base layers ---
+const osm = L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
+  maxZoom: 19,
+  attribution: '&copy; <a href="https://openstreetmap.org/copyright">OSM</a> contributors | Address data: VĮ Registrų centras (CC BY 4.0)'
+});
+const sat = L.tileLayer(
+  'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
+  maxZoom: 19,
+  attribution: 'Imagery &copy; Esri | &copy; OSM contributors | Address data: VĮ Registrų centras (CC BY 4.0)'
+});
+
+const map = L.map('map', { layers: [osm] }).setView([54.31, 25.39], 14);
+
+// --- Data layers ---
+const addrLayer = L.geoJSON(null, {
+  pointToLayer: (f, ll) => L.circleMarker(ll, {
+    radius: 5, color: '#0066cc', weight: 1,
+    fillColor: '#3399ff', fillOpacity: 0.8
+  }),
+  onEachFeature: (f, layer) => {
+    const p = f.properties;
+    layer.bindPopup(
+      `<b>${p.house_no}</b><br>` +
+      `rc_code: ${p.rc_code}<br>` +
+      `postal: ${p.postal_code || '—'}<br>` +
+      `locality: ${p.locality_code} | street: ${p.street_code || '—'}`
+    );
+  }
+});
+
+const locLayer = L.geoJSON(null, {
+  style: { color: '#ff7800', weight: 1.5, fillOpacity: 0.04 },
+  onEachFeature: (f, layer) => {
+    const p = f.properties;
+    layer.bindTooltip(`${p.name} (${p.type})`, { sticky: true });
+  }
+});
+
+const strLayer = L.geoJSON(null, {
+  style: { color: '#555', weight: 1.5, opacity: 0.7 },
+  onEachFeature: (f, layer) => {
+    layer.bindTooltip(f.properties.name, { sticky: true });
+  }
+});
+
+const heatLayer = L.heatLayer([], { radius: 25, blur: 15, maxZoom: 17 });
+
+// --- Layer control ---
+L.control.layers(
+  { 'OSM': osm, 'Satelita (Esri)': sat },
+  {
+    'Adresy (zoom≥13)': addrLayer.addTo(map),
+    'Granice gmin': locLayer,
+    'Ulice (zoom≥14)': strLayer,
+    'Heatmapa gęstości': heatLayer
+  }
+).addTo(map);
+
+// --- Info panel ---
+const info = document.getElementById('info');
+function setInfo(msg, cls = '') {
+  info.textContent = msg;
+  info.className = cls;
+}
+
+// --- Fetch & render ---
+let lastFetch = 0;
+
+async function refresh() {
+  const b = map.getBounds();
+  const z = map.getZoom();
+  const bbox = `${b.getWest()},${b.getSouth()},${b.getEast()},${b.getNorth()}`;
+  const t = ++lastFetch;
+  setInfo(`zoom ${z} · ładuję…`, 'loading');
+
+  try {
+    const fetches = await Promise.all([
+      map.hasLayer(addrLayer) && z >= 13
+        ? fetch(`/api/addresses?bbox=${bbox}&limit=2000`).then(r => r.json())
+        : Promise.resolve(null),
+      map.hasLayer(locLayer)
+        ? fetch(`/api/localities?bbox=${bbox}&limit=500`).then(r => r.json())
+        : Promise.resolve(null),
+      map.hasLayer(strLayer) && z >= 14
+        ? fetch(`/api/streets?bbox=${bbox}&limit=2000`).then(r => r.json())
+        : Promise.resolve(null),
+      map.hasLayer(heatLayer)
+        ? fetch(`/api/density?bbox=${bbox}&cell=${z >= 14 ? 0.0005 : z >= 11 ? 0.005 : 0.05}`).then(r => r.json())
+        : Promise.resolve(null),
+    ]);
+
+    if (t !== lastFetch) return; // stale — newer request is in flight
+
+    const [a, l, s, h] = fetches;
+    if (a) { addrLayer.clearLayers(); addrLayer.addData(a); }
+    if (l) { locLayer.clearLayers(); locLayer.addData(l); }
+    if (s) { strLayer.clearLayers(); strLayer.addData(s); }
+    if (h) { heatLayer.setLatLngs(h.map(p => [p.lat, p.lon, p.weight])); }
+
+    const counts = [
+      a ? `adresy: ${a.features?.length ?? 0}` : null,
+      l ? `gminy: ${l.features?.length ?? 0}` : null,
+      s ? `ulice: ${s.features?.length ?? 0}` : null,
+      h ? `heat: ${h.length ?? 0} cells` : null,
+    ].filter(Boolean).join(' · ');
+
+    setInfo(`zoom ${z}${counts ? ' · ' + counts : ''}`);
+  } catch (e) {
+    if (t !== lastFetch) return;
+    setInfo(`Błąd: ${e.message}`, 'error');
+  }
+}
+
+map.on('moveend', refresh);
+map.on('overlayadd', refresh);
+map.on('overlayremove', () => setInfo(`zoom ${map.getZoom()}`));
+refresh();
+</script>
+</body>
+</html>

@@ -14,3 +14,22 @@ wheels/
 .env.local
 
 workflow.txt
+.claude/settings.local.json
+
+# ETL state / cache
+etl/state/
+
+# detect-secrets baseline (contains no secrets, but local to machine)
+.secrets.baseline
+
+# pre-commit cache
+.pre-commit-cache/
+
+# ruff cache
+.ruff_cache/
+.pre-commit-config.yaml
+
+.pytest_cache/
+.claude/
+# viewer/
+
