@@ -191,6 +191,9 @@ async def _filter_addresses(db: AsyncSession, f: BulkFilter) -> list[int]:
     filters = ["a.deleted_at IS NULL", "a.address_type = 'building'"]
     params: dict = {}
 
+    if f.rc_codes:
+        filters.append("a.rc_code = ANY(:rc_codes)")
+        params["rc_codes"] = f.rc_codes
     if f.locality_code:
         filters.append("a.locality_code = :locality_code")
         params["locality_code"] = f.locality_code

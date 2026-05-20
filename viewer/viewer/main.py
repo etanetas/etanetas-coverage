@@ -16,3 +16,8 @@ app.include_router(router)
 @app.get("/")
 async def index() -> FileResponse:
     return FileResponse(_STATIC / "map.html")
+
+
+@app.get("/lms")
+async def lms() -> FileResponse:
+    return FileResponse(_STATIC / "lms.html")

@@ -1,0 +1,877 @@
+<!DOCTYPE html>
+<html lang="lt" class="h-full">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Etanetas · LMS administravimas</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+<script src="https://cdn.tailwindcss.com"></script>
+<script>
+  tailwind.config = {
+    theme: {
+      extend: {
+        fontFamily: {
+          sans: ['"IBM Plex Sans"', 'system-ui', 'sans-serif'],
+          mono: ['"IBM Plex Mono"', 'monospace'],
+        },
+      }
+    }
+  }
+</script>
+<style>
+  [x-cloak]{display:none!important}
+  body{font-family:"IBM Plex Sans",system-ui,sans-serif}
+
+  /* Sidebar nav item */
+  .nav-item{
+    display:flex;align-items:center;gap:9px;padding:7px 12px;
+    border-radius:6px;cursor:pointer;transition:all .15s;
+    color:#94a3b8;font-size:.8125rem;font-weight:500;
+    border-left:2px solid transparent;
+  }
+  .nav-item:hover{background:rgba(255,255,255,.06);color:#e2e8f0}
+  .nav-item.active{background:rgba(59,130,246,.18);color:#fff;border-left-color:#3b82f6}
+
+  /* Status badges */
+  .badge{
+    display:inline-flex;align-items:center;gap:3px;
+    padding:1px 6px;border-radius:3px;
+    font-size:.68rem;font-weight:600;font-family:"IBM Plex Mono",monospace;
+    white-space:nowrap;line-height:1.6;
+  }
+  .b-available{background:#dcfce7;color:#15803d}
+  .b-planned{background:#fef3c7;color:#854d0e}
+  .b-construction{background:#dbeafe;color:#1e40af}
+  .b-unavailable{background:#f1f5f9;color:#94a3b8}
+
+  /* Table */
+  .dt tbody tr{border-bottom:1px solid #f1f5f9;cursor:pointer}
+  .dt tbody tr:hover{background:#f8fafc}
+  .dt tbody tr.sel{background:#eff6ff}
+  .dt tbody tr.exp{background:#f0f7ff}
+
+  /* Scrollbar */
+  ::-webkit-scrollbar{width:5px;height:5px}
+  ::-webkit-scrollbar-track{background:transparent}
+  ::-webkit-scrollbar-thumb{background:#cbd5e1;border-radius:3px}
+
+  /* Animations */
+  @keyframes fadeUp{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:translateY(0)}}
+  @keyframes slideUp{from{opacity:0;transform:translateY(100%)}to{opacity:1;transform:translateY(0)}}
+  @keyframes spin{to{transform:rotate(360deg)}}
+  .fade-up{animation:fadeUp .2s ease-out}
+  .slide-up{animation:slideUp .25s ease-out}
+  .spinner{animation:spin .75s linear infinite}
+</style>
+</head>
+<body class="h-full bg-slate-50 text-slate-800" x-data="app()" x-init="init()" x-cloak>
+
+<!-- ══════════════════════════════════════════════════
+     CONFIG SCREEN
+══════════════════════════════════════════════════ -->
+<div x-show="!configured" class="min-h-screen flex items-center justify-center" style="background:#0f172a">
+  <div class="bg-white rounded-2xl shadow-2xl w-full max-w-sm p-8">
+    <div class="flex items-center gap-3 mb-6">
+      <div class="w-9 h-9 bg-blue-600 rounded-xl flex items-center justify-center">
+        <svg class="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/>
+        </svg>
+      </div>
+      <div>
+        <div class="font-bold text-slate-900 leading-none">Etanetas</div>
+        <div class="text-xs text-slate-400 mt-0.5">LMS plugin · Adresų valdymas</div>
+      </div>
+    </div>
+    <div class="space-y-3">
+      <div>
+        <label class="block text-xs font-semibold text-slate-500 uppercase tracking-wide mb-1">API URL</label>
+        <input x-model="cfg.url" type="text" placeholder="http://localhost:8000"
+               class="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg font-mono bg-slate-50"/>
+      </div>
+      <div>
+        <label class="block text-xs font-semibold text-slate-500 uppercase tracking-wide mb-1">API raktas</label>
+        <input x-model="cfg.key" type="password" placeholder="etn_pk_…"
+               @keydown.enter="connect()"
+               class="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg font-mono bg-slate-50"/>
+      </div>
+      <button @click="connect()" :disabled="!cfg.key || connecting"
+              class="w-full py-2.5 bg-blue-600 text-white text-sm font-semibold rounded-xl hover:bg-blue-700 disabled:opacity-40 transition flex items-center justify-center gap-2">
+        <div x-show="connecting" class="w-4 h-4 border-2 border-white/40 border-t-white rounded-full spinner"></div>
+        Prisijungti
+      </button>
+      <p x-show="cfgErr" class="text-xs text-red-500 text-center" x-text="cfgErr"></p>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════════════════
+     MAIN APP
+══════════════════════════════════════════════════ -->
+<div x-show="configured" class="h-screen flex overflow-hidden">
+
+  <!-- ─── SIDEBAR ─── -->
+  <aside class="w-52 flex-shrink-0 flex flex-col" style="background:#0f172a">
+    <!-- Brand -->
+    <div class="px-4 py-4 border-b border-white/10">
+      <div class="flex items-center gap-2.5">
+        <div class="w-7 h-7 bg-blue-600 rounded-lg flex items-center justify-center flex-shrink-0">
+          <svg class="w-4 h-4 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M13 10V3L4 14h7v7l9-11h-7z"/>
+          </svg>
+        </div>
+        <div>
+          <div class="text-white text-sm font-bold leading-none">Etanetas</div>
+          <div class="text-slate-500 text-xs mt-0.5">Adresų valdymas</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Nav -->
+    <nav class="flex-1 p-2.5 space-y-0.5">
+      <template x-for="item in navItems" :key="item.id">
+        <div @click="switchTab(item.id)" :class="tab===item.id ? 'active' : ''" class="nav-item">
+          <svg class="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.75" :d="item.icon"/>
+          </svg>
+          <span x-text="item.label"></span>
+        </div>
+      </template>
+    </nav>
+
+    <!-- User -->
+    <div x-show="me" class="px-3 py-3 border-t border-white/10">
+      <div class="flex items-center gap-2 px-2">
+        <div class="w-6 h-6 bg-blue-700 rounded-full flex items-center justify-center flex-shrink-0 text-white text-xs font-bold"
+             x-text="(me?.username||'?')[0].toUpperCase()"></div>
+        <div class="flex-1 min-w-0">
+          <div class="text-slate-300 text-xs font-medium truncate" x-text="me?.username"></div>
+          <div class="text-slate-500 text-xs truncate" x-text="me?.role"></div>
+        </div>
+        <button @click="disconnect()" class="text-slate-600 hover:text-slate-300 transition" title="Atsijungti">
+          <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1"/>
+          </svg>
+        </button>
+      </div>
+    </div>
+  </aside>
+
+  <!-- ─── CONTENT ─── -->
+  <div class="flex-1 flex flex-col overflow-hidden min-w-0">
+
+    <!-- LMS breadcrumb bar -->
+    <div class="bg-slate-100 border-b border-slate-200 px-5 py-1.5 flex items-center gap-2 text-xs text-slate-500 flex-shrink-0">
+      <span>LMS Plus</span>
+      <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
+      <span>Etanetas plugin</span>
+      <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
+      <span class="text-slate-700 font-medium" x-text="navItems.find(n=>n.id===tab)?.label || ''"></span>
+    </div>
+
+    <!-- ══ ADDRESSES TAB ══ -->
+    <div x-show="tab==='addresses'" class="flex-1 flex flex-col overflow-hidden">
+
+      <!-- Toolbar -->
+      <div class="bg-white border-b border-slate-100 px-5 py-2.5 flex items-center gap-3 flex-shrink-0">
+        <div class="relative flex-1 max-w-sm">
+          <svg class="w-3.5 h-3.5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/>
+          </svg>
+          <input x-model="q" @input.debounce.450ms="search()" @keydown.enter="search()" type="text"
+                 placeholder="Ieškoti adreso…"
+                 class="w-full pl-9 pr-3 py-1.5 text-sm border border-slate-200 rounded-lg bg-slate-50 focus:bg-white focus:outline-blue-400 transition"/>
+        </div>
+        <input x-model="fLocality" @change="search()" type="number" placeholder="Gyvenv. kodas"
+               class="w-32 px-2.5 py-1.5 text-xs border border-slate-200 rounded-lg font-mono bg-slate-50 focus:bg-white focus:outline-blue-400 transition"/>
+        <select x-model="fType" @change="search()"
+                class="px-2.5 py-1.5 text-xs border border-slate-200 rounded-lg bg-slate-50 focus:outline-blue-400 transition">
+          <option value="">Visi tipai</option>
+          <option value="building">Pastatas</option>
+          <option value="premises">Patalpa</option>
+        </select>
+        <div x-show="loading" class="w-4 h-4 border-2 border-blue-500 border-t-transparent rounded-full spinner"></div>
+        <span x-show="addrs.length && !loading" class="text-xs text-slate-400 ml-auto" x-text="`${addrs.length} rezultatų`"></span>
+      </div>
+
+      <!-- Table -->
+      <div class="flex-1 overflow-auto bg-white">
+        <!-- Empty -->
+        <div x-show="!addrs.length && !loading" class="flex flex-col items-center justify-center h-56 text-slate-300">
+          <svg class="w-10 h-10 mb-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.25" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/>
+          </svg>
+          <p class="text-sm text-slate-400">Įveskite paieškos tekstą</p>
+          <p class="text-xs text-slate-300 mt-1">min. 2 simboliai</p>
+        </div>
+
+        <table x-show="addrs.length" class="w-full text-sm dt">
+          <thead class="bg-slate-50 sticky top-0 z-10 text-xs font-semibold text-slate-500 uppercase tracking-wide">
+            <tr>
+              <th class="py-2 px-3 w-8">
+                <input type="checkbox" :checked="sel.length===addrs.length&&addrs.length>0" @change="selAll()" class="rounded border-slate-300"/>
+              </th>
+              <th class="py-2 px-3 text-left">Adresas</th>
+              <th class="py-2 px-3 w-24 text-left">Paštas</th>
+              <th class="py-2 px-3 text-left">Technologijos</th>
+              <th class="py-2 px-3 w-8"></th>
+            </tr>
+          </thead>
+          <tbody>
+            <template x-for="a in addrs" :key="a.rc_code">
+              <!-- Main row -->
+              <tr :class="{'sel':sel.includes(a.rc_code),'exp':expanded===a.rc_code}" @click.self="expand(a.rc_code)">
+                <td class="py-2 px-3" @click.stop>
+                  <input type="checkbox" :checked="sel.includes(a.rc_code)" @change="toggle(a.rc_code)" class="rounded border-slate-300"/>
+                </td>
+                <td class="py-2 px-3 cursor-pointer" @click="expand(a.rc_code)">
+                  <div class="font-medium text-slate-800" x-text="a.full_address"></div>
+                  <div class="text-xs text-slate-400 font-mono mt-0.5" x-text="'rc:'+a.rc_code"></div>
+                </td>
+                <td class="py-2 px-3 font-mono text-xs text-slate-500" x-text="a.postal_code||'—'"></td>
+                <td class="py-2 px-3">
+                  <template x-if="offerings[a.rc_code]">
+                    <div class="flex flex-wrap gap-1">
+                      <template x-if="offerings[a.rc_code].length===0">
+                        <span class="text-xs text-slate-300">nėra</span>
+                      </template>
+                      <template x-for="o in offerings[a.rc_code]" :key="o.id">
+                        <span class="badge" :class="statusBadge(o.status)">
+                          <span class="w-1.5 h-1.5 rounded-full flex-shrink-0" :class="statusDot(o.status)"></span>
+                          <span x-text="techName(o.technology_id)"></span>
+                        </span>
+                      </template>
+                    </div>
+                  </template>
+                  <span x-show="!offerings[a.rc_code]" class="text-xs text-slate-300">—</span>
+                </td>
+                <td class="py-2 px-3" @click.stop>
+                  <button @click="expand(a.rc_code)" class="p-1 rounded hover:bg-slate-100 text-slate-400 transition">
+                    <svg class="w-3.5 h-3.5 transition-transform" :class="expanded===a.rc_code?'rotate-180':''" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/>
+                    </svg>
+                  </button>
+                </td>
+              </tr>
+
+              <!-- Detail row -->
+              <tr x-show="expanded===a.rc_code">
+                <td colspan="5" class="px-6 py-4 bg-slate-50 border-b border-slate-200">
+                  <div class="fade-up flex gap-8">
+                    <!-- Info -->
+                    <div class="flex-shrink-0 min-w-0">
+                      <div class="text-xs font-semibold text-slate-400 uppercase tracking-wide mb-1.5">Adresas</div>
+                      <div class="font-medium text-slate-800 text-sm" x-text="a.full_address"></div>
+                      <div class="mt-1 flex gap-3 text-xs text-slate-500">
+                        <span>Paštas: <span class="font-mono" x-text="a.postal_code||'—'"></span></span>
+                        <span>RC: <span class="font-mono" x-text="a.rc_code"></span></span>
+                        <span>Tipas: <span x-text="a.address_type"></span></span>
+                      </div>
+                    </div>
+
+                    <!-- Offerings -->
+                    <div class="flex-1 min-w-0">
+                      <div class="flex items-center gap-3 mb-2">
+                        <div class="text-xs font-semibold text-slate-400 uppercase tracking-wide">Paslaugos</div>
+                        <button @click="startAdd(a.rc_code)" class="text-xs text-blue-600 hover:text-blue-800 font-semibold transition flex items-center gap-1">
+                          <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M12 4v16m8-8H4"/></svg>
+                          Pridėti
+                        </button>
+                      </div>
+
+                      <div x-show="!offerings[a.rc_code]||offerings[a.rc_code].length===0" class="text-xs text-slate-400 italic mb-2">
+                        Nėra priskirtų paslaugų
+                      </div>
+
+                      <div class="flex flex-wrap gap-2 mb-3">
+                        <template x-for="o in (offerings[a.rc_code]||[])" :key="o.id">
+                          <div class="flex items-center gap-2 bg-white rounded-lg border border-slate-200 px-2.5 py-1.5 text-xs shadow-sm">
+                            <span class="w-2 h-2 rounded-full flex-shrink-0" :class="statusDot(o.status)"></span>
+                            <span class="font-semibold text-slate-700" x-text="techName(o.technology_id)"></span>
+                            <span class="text-slate-500 font-mono" x-text="`${o.max_download_mbps}↓ ${o.max_upload_mbps}↑`"></span>
+                            <span class="px-1.5 rounded text-xs font-medium" :class="statusBadge(o.status)" x-text="o.status"></span>
+                            <button @click="delOffering(a.rc_code, o.id)" class="text-slate-300 hover:text-red-500 transition ml-1">
+                              <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+                            </button>
+                          </div>
+                        </template>
+                      </div>
+
+                      <!-- Add offering inline form -->
+                      <div x-show="addFor===a.rc_code" class="mt-1 pt-3 border-t border-slate-200">
+                        <div class="text-xs font-semibold text-slate-400 uppercase tracking-wide mb-2">Nauja paslauga</div>
+                        <div class="flex flex-wrap gap-2 items-end">
+                          <div>
+                            <label class="block text-xs text-slate-500 mb-1">Technologija</label>
+                            <select x-model="newOff.technology_id" class="px-2 py-1.5 text-xs border border-slate-200 rounded-lg bg-white focus:outline-blue-400">
+                              <option value="">Pasirinkti…</option>
+                              <template x-for="t in techs.filter(t=>t.active)" :key="t.id">
+                                <option :value="t.id" x-text="t.display_name"></option>
+                              </template>
+                            </select>
+                          </div>
+                          <div>
+                            <label class="block text-xs text-slate-500 mb-1">Statusas</label>
+                            <select x-model="newOff.status" class="px-2 py-1.5 text-xs border border-slate-200 rounded-lg bg-white focus:outline-blue-400">
+                              <option value="available">available</option>
+                              <option value="planned">planned</option>
+                              <option value="under_construction">under_construction</option>
+                              <option value="unavailable">unavailable</option>
+                            </select>
+                          </div>
+                          <div>
+                            <label class="block text-xs text-slate-500 mb-1">↓ Mbit/s</label>
+                            <input x-model.number="newOff.max_download_mbps" type="number" class="w-20 px-2 py-1.5 text-xs border border-slate-200 rounded-lg font-mono bg-white focus:outline-blue-400"/>
+                          </div>
+                          <div>
+                            <label class="block text-xs text-slate-500 mb-1">↑ Mbit/s</label>
+                            <input x-model.number="newOff.max_upload_mbps" type="number" class="w-20 px-2 py-1.5 text-xs border border-slate-200 rounded-lg font-mono bg-white focus:outline-blue-400"/>
+                          </div>
+                          <div>
+                            <label class="block text-xs text-slate-500 mb-1">Nuo</label>
+                            <input x-model="newOff.status_since" type="date" class="px-2 py-1.5 text-xs border border-slate-200 rounded-lg font-mono bg-white focus:outline-blue-400"/>
+                          </div>
+                          <div class="flex gap-1.5">
+                            <button @click="saveOff(a.rc_code)" class="px-3 py-1.5 bg-blue-600 text-white text-xs font-semibold rounded-lg hover:bg-blue-700 transition">Išsaugoti</button>
+                            <button @click="addFor=null" class="px-3 py-1.5 bg-slate-100 text-slate-600 text-xs font-semibold rounded-lg hover:bg-slate-200 transition">Atšaukti</button>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </td>
+              </tr>
+            </template>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- ══ TECHNOLOGIES TAB ══ -->
+    <div x-show="tab==='technologies'" class="flex-1 overflow-auto p-5">
+      <div class="max-w-3xl fade-up">
+        <div class="flex items-center justify-between mb-4">
+          <h1 class="font-bold text-slate-700">Technologijų katalogas</h1>
+          <span class="text-xs text-slate-400" x-text="`${techs.length} variantų`"></span>
+        </div>
+        <div class="bg-white rounded-xl border border-slate-200 overflow-hidden shadow-sm">
+          <table class="w-full text-sm">
+            <thead class="bg-slate-50 text-xs font-semibold text-slate-500 uppercase tracking-wide">
+              <tr>
+                <th class="py-2.5 px-4 text-left">Kodas</th>
+                <th class="py-2.5 px-4 text-left">Pavadinimas</th>
+                <th class="py-2.5 px-4 text-left">Max ↓/↑ Mbit/s</th>
+                <th class="py-2.5 px-4 text-left">Aktyvus</th>
+              </tr>
+            </thead>
+            <tbody>
+              <template x-for="t in techs" :key="t.id">
+                <tr class="border-t border-slate-100 hover:bg-slate-50">
+                  <td class="py-2.5 px-4 font-mono text-xs text-slate-500" x-text="t.variant_code"></td>
+                  <td class="py-2.5 px-4 font-medium text-slate-800" x-text="t.display_name"></td>
+                  <td class="py-2.5 px-4 font-mono text-xs text-slate-500"
+                      x-text="t.theoretical_max_dl_mbps ? `${t.theoretical_max_dl_mbps} / ${t.theoretical_max_ul_mbps}` : '—'"></td>
+                  <td class="py-2.5 px-4">
+                    <span class="px-2 py-0.5 rounded-full text-xs font-semibold"
+                          :class="t.active ? 'bg-green-100 text-green-700' : 'bg-slate-100 text-slate-400'"
+                          x-text="t.active ? 'Taip' : 'Ne'"></span>
+                  </td>
+                </tr>
+              </template>
+              <tr x-show="!techs.length">
+                <td colspan="4" class="py-10 text-center text-sm text-slate-400">Nėra technologijų</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- ══ ZONES TAB ══ -->
+    <div x-show="tab==='zones'" class="flex-1 overflow-auto p-5">
+      <div class="max-w-3xl fade-up">
+        <div class="flex items-center justify-between mb-4">
+          <h1 class="font-bold text-slate-700">Paslaugų zonos</h1>
+          <button @click="showNewZone=!showNewZone"
+                  class="flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 text-white text-xs font-semibold rounded-lg hover:bg-blue-700 transition">
+            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M12 4v16m8-8H4"/></svg>
+            Nauja zona
+          </button>
+        </div>
+        <div x-show="showNewZone" class="bg-blue-50 border border-blue-200 rounded-xl p-4 mb-4 fade-up">
+          <div class="text-xs font-semibold text-blue-600 uppercase tracking-wide mb-3">Nauja zona</div>
+          <div class="flex flex-wrap gap-3 items-end">
+            <div>
+              <label class="block text-xs text-slate-500 mb-1">Pavadinimas</label>
+              <input x-model="nz.name" type="text" placeholder="Zonos pavadinimas" class="px-2.5 py-1.5 text-sm border border-slate-200 rounded-lg bg-white focus:outline-blue-400"/>
+            </div>
+            <div>
+              <label class="block text-xs text-slate-500 mb-1">Prioritetas</label>
+              <input x-model.number="nz.priority" type="number" class="w-20 px-2.5 py-1.5 text-sm border border-slate-200 rounded-lg font-mono bg-white focus:outline-blue-400"/>
+            </div>
+            <div>
+              <label class="block text-xs text-slate-500 mb-1">Aprašymas</label>
+              <input x-model="nz.description" type="text" placeholder="Neprivalomas" class="px-2.5 py-1.5 text-sm border border-slate-200 rounded-lg bg-white focus:outline-blue-400"/>
+            </div>
+            <div class="flex gap-2">
+              <button @click="createZone()" class="px-3 py-1.5 bg-blue-600 text-white text-xs font-semibold rounded-lg hover:bg-blue-700 transition">Sukurti</button>
+              <button @click="showNewZone=false" class="px-3 py-1.5 bg-white text-slate-600 text-xs font-semibold rounded-lg border border-slate-200 hover:bg-slate-50 transition">Atšaukti</button>
+            </div>
+          </div>
+        </div>
+        <div class="bg-white rounded-xl border border-slate-200 overflow-hidden shadow-sm">
+          <table class="w-full text-sm">
+            <thead class="bg-slate-50 text-xs font-semibold text-slate-500 uppercase tracking-wide">
+              <tr>
+                <th class="py-2.5 px-4 text-left">Pavadinimas</th>
+                <th class="py-2.5 px-4 text-left">Aprašymas</th>
+                <th class="py-2.5 px-4 w-24 text-left">Prioritetas</th>
+                <th class="py-2.5 px-4 w-20 text-left">Poligonas</th>
+                <th class="py-2.5 px-4 w-12"></th>
+              </tr>
+            </thead>
+            <tbody>
+              <template x-for="z in zones" :key="z.id">
+                <tr class="border-t border-slate-100 hover:bg-slate-50">
+                  <td class="py-2.5 px-4 font-medium text-slate-800" x-text="z.name"></td>
+                  <td class="py-2.5 px-4 text-xs text-slate-500" x-text="z.description||'—'"></td>
+                  <td class="py-2.5 px-4 font-mono text-xs text-slate-500" x-text="z.priority"></td>
+                  <td class="py-2.5 px-4">
+                    <span class="px-2 py-0.5 rounded-full text-xs font-semibold"
+                          :class="z.has_polygon?'bg-green-100 text-green-700':'bg-slate-100 text-slate-400'"
+                          x-text="z.has_polygon?'Yra':'Nėra'"></span>
+                  </td>
+                  <td class="py-2.5 px-4">
+                    <button @click="delZone(z.id)" class="text-slate-300 hover:text-red-500 transition p-1 rounded hover:bg-red-50" title="Ištrinti">
+                      <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
+                    </button>
+                  </td>
+                </tr>
+              </template>
+              <tr x-show="!zones.length">
+                <td colspan="5" class="py-10 text-center text-sm text-slate-400">Nėra zonų</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- ══ OPERATIONS TAB ══ -->
+    <div x-show="tab==='operations'" class="flex-1 overflow-auto p-5">
+      <div class="max-w-4xl fade-up">
+        <div class="flex items-center justify-between mb-4">
+          <h1 class="font-bold text-slate-700">Grupinių operacijų istorija</h1>
+          <button @click="loadOps()" class="text-xs text-slate-400 hover:text-slate-600 flex items-center gap-1 transition">
+            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
+            Atnaujinti
+          </button>
+        </div>
+        <div class="bg-white rounded-xl border border-slate-200 overflow-hidden shadow-sm">
+          <table class="w-full text-sm">
+            <thead class="bg-slate-50 text-xs font-semibold text-slate-500 uppercase tracking-wide">
+              <tr>
+                <th class="py-2.5 px-4 text-left">Operacija</th>
+                <th class="py-2.5 px-4 text-left">Vartotojas</th>
+                <th class="py-2.5 px-4 w-20 text-left">Adresų</th>
+                <th class="py-2.5 px-4 w-44 text-left">Data</th>
+                <th class="py-2.5 px-4 w-24 text-left">Būsena</th>
+                <th class="py-2.5 px-4 w-20"></th>
+              </tr>
+            </thead>
+            <tbody>
+              <template x-for="op in ops" :key="op.id">
+                <tr class="border-t border-slate-100 hover:bg-slate-50">
+                  <td class="py-2.5 px-4">
+                    <span class="font-mono text-xs bg-slate-100 text-slate-600 px-1.5 py-0.5 rounded" x-text="op.operation_type"></span>
+                  </td>
+                  <td class="py-2.5 px-4 text-xs text-slate-600" x-text="op.username||'—'"></td>
+                  <td class="py-2.5 px-4 font-mono text-xs" x-text="op.affected_count"></td>
+                  <td class="py-2.5 px-4 text-xs text-slate-500 font-mono" x-text="fmtDate(op.created_at)"></td>
+                  <td class="py-2.5 px-4">
+                    <span class="px-2 py-0.5 rounded-full text-xs font-semibold"
+                          :class="op.rolled_back_at?'bg-slate-100 text-slate-400':'bg-green-100 text-green-700'"
+                          x-text="op.rolled_back_at?'Atšaukta':'Vykdyta'"></span>
+                  </td>
+                  <td class="py-2.5 px-4">
+                    <button x-show="!op.rolled_back_at" @click="rollback(op.id)"
+                            class="text-xs text-amber-600 hover:text-amber-800 font-semibold transition">Atšaukti</button>
+                  </td>
+                </tr>
+              </template>
+              <tr x-show="!ops.length">
+                <td colspan="6" class="py-10 text-center text-sm text-slate-400">Nėra operacijų</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+  </div><!-- /content -->
+</div><!-- /main app -->
+
+<!-- ══════════════════════════════════════════════════
+     BULK ACTION BAR (fixed bottom)
+══════════════════════════════════════════════════ -->
+<div x-show="tab==='addresses' && sel.length>0"
+     class="fixed bottom-0 left-52 right-0 bg-slate-900 text-white px-5 py-3 flex items-center gap-4 shadow-2xl slide-up z-40">
+  <span class="text-sm font-semibold" x-text="`${sel.length} pasirinkta`"></span>
+  <button @click="sel=[]" class="text-slate-500 hover:text-white transition">
+    <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+  </button>
+  <div class="w-px h-5 bg-slate-700"></div>
+  <button @click="showBulk=true"
+          class="flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 text-white text-xs font-semibold rounded-lg hover:bg-blue-500 transition">
+    <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg>
+    Pridėti technologiją
+  </button>
+  <span x-show="fLocality" class="ml-auto text-xs text-slate-400">
+    filtras: <span class="font-mono text-slate-300" x-text="fLocality"></span>
+  </span>
+</div>
+
+<!-- ══════════════════════════════════════════════════
+     BULK MODAL
+══════════════════════════════════════════════════ -->
+<div x-show="showBulk" class="fixed inset-0 bg-black/50 flex items-center justify-center z-50" @click.self="showBulk=false">
+  <div class="bg-white rounded-2xl shadow-2xl w-full max-w-md mx-4 overflow-hidden fade-up">
+    <div class="px-5 py-4" style="background:#1e293b">
+      <div class="flex items-center justify-between">
+        <div>
+          <div class="text-white font-semibold text-sm">Grupinė operacija</div>
+          <div class="text-slate-400 text-xs mt-0.5" x-text="`${sel.length} adresų pasirinkta`"></div>
+        </div>
+        <button @click="showBulk=false" class="text-slate-500 hover:text-white transition">
+          <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+        </button>
+      </div>
+    </div>
+    <div class="p-5 space-y-4">
+      <div>
+        <label class="block text-xs font-semibold text-slate-500 uppercase tracking-wide mb-1.5">Technologija</label>
+        <select x-model="bulk.technology_id" class="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg bg-slate-50 focus:outline-blue-400">
+          <option value="">Pasirinkti…</option>
+          <template x-for="t in techs.filter(t=>t.active)" :key="t.id">
+            <option :value="t.id" x-text="t.display_name"></option>
+          </template>
+        </select>
+      </div>
+      <div class="grid grid-cols-2 gap-3">
+        <div>
+          <label class="block text-xs font-semibold text-slate-500 uppercase tracking-wide mb-1.5">Statusas</label>
+          <select x-model="bulk.status" class="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg bg-slate-50 focus:outline-blue-400">
+            <option value="available">available</option>
+            <option value="planned">planned</option>
+            <option value="under_construction">under_construction</option>
+          </select>
+        </div>
+        <div>
+          <label class="block text-xs font-semibold text-slate-500 uppercase tracking-wide mb-1.5">Nuo datos</label>
+          <input x-model="bulk.status_since" type="date" class="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg font-mono bg-slate-50 focus:outline-blue-400"/>
+        </div>
+      </div>
+      <div class="grid grid-cols-2 gap-3">
+        <div>
+          <label class="block text-xs font-semibold text-slate-500 uppercase tracking-wide mb-1.5">↓ Mbit/s</label>
+          <input x-model.number="bulk.max_dl_mbps" type="number" class="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg font-mono bg-slate-50 focus:outline-blue-400"/>
+        </div>
+        <div>
+          <label class="block text-xs font-semibold text-slate-500 uppercase tracking-wide mb-1.5">↑ Mbit/s</label>
+          <input x-model.number="bulk.max_ul_mbps" type="number" class="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg font-mono bg-slate-50 focus:outline-blue-400"/>
+        </div>
+      </div>
+      <div class="bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-xs text-slate-600">
+        Operacija bus taikoma <span class="font-semibold text-slate-800" x-text="sel.length"></span> pasirinktiems adresams.
+      </div>
+      <div class="flex gap-3">
+        <button @click="preview()" :disabled="!bulk.technology_id||!sel.length||loading"
+                class="flex-1 py-2.5 bg-blue-600 text-white text-sm font-semibold rounded-xl hover:bg-blue-700 disabled:opacity-40 transition flex items-center justify-center gap-2">
+          <div x-show="loading" class="w-4 h-4 border-2 border-white/40 border-t-white rounded-full spinner"></div>
+          Peržiūrėti
+        </button>
+        <button @click="showBulk=false" class="px-5 py-2.5 bg-slate-100 text-slate-700 text-sm font-semibold rounded-xl hover:bg-slate-200 transition">Atšaukti</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════════════════
+     PREVIEW MODAL
+══════════════════════════════════════════════════ -->
+<div x-show="showPreview && prev" class="fixed inset-0 bg-black/60 flex items-center justify-center z-50" @click.self="showPreview=false">
+  <div class="bg-white rounded-2xl shadow-2xl w-full max-w-lg mx-4 overflow-hidden fade-up">
+    <div class="px-5 py-4 bg-blue-700">
+      <div class="text-white font-semibold">Peržiūra prieš vykdymą</div>
+      <div class="text-blue-200 text-sm mt-0.5">
+        Bus paveikta: <span class="font-bold text-white" x-text="prev?.affected_count"></span> adresų
+      </div>
+    </div>
+    <div class="p-5">
+      <div class="mb-4">
+        <div class="text-xs font-semibold text-slate-400 uppercase tracking-wide mb-2">Pavyzdžiai</div>
+        <div class="space-y-1.5" x-show="prev?.sample?.length">
+          <template x-for="item in (prev?.sample||[])" :key="item.address">
+            <div class="flex items-start gap-3 text-xs bg-slate-50 rounded-lg px-3 py-2">
+              <div class="flex-1 font-medium text-slate-700" x-text="item.address"></div>
+              <span x-show="item.current" class="text-amber-600 font-semibold flex-shrink-0">≠ atnaujinama</span>
+              <span x-show="!item.current" class="text-green-600 font-semibold flex-shrink-0">+ nauja</span>
+            </div>
+          </template>
+        </div>
+        <div x-show="!prev?.sample?.length" class="text-xs text-slate-400 italic">Pavyzdžių nėra</div>
+      </div>
+      <div class="bg-slate-50 rounded-xl p-3 mb-4 grid grid-cols-2 gap-2 text-xs">
+        <div><span class="text-slate-400">Technologija:</span> <span class="font-semibold" x-text="techName(bulk.technology_id)"></span></div>
+        <div><span class="text-slate-400">Statusas:</span> <span class="font-semibold font-mono" x-text="bulk.status"></span></div>
+        <div><span class="text-slate-400">Greitis ↓:</span> <span class="font-semibold font-mono" x-text="`${bulk.max_dl_mbps} Mbit/s`"></span></div>
+        <div><span class="text-slate-400">Greitis ↑:</span> <span class="font-semibold font-mono" x-text="`${bulk.max_ul_mbps} Mbit/s`"></span></div>
+      </div>
+      <div class="flex gap-3">
+        <button @click="execute()" :disabled="loading"
+                class="flex-1 py-2.5 bg-blue-600 text-white text-sm font-bold rounded-xl hover:bg-blue-700 disabled:opacity-40 transition flex items-center justify-center gap-2">
+          <div x-show="loading" class="w-4 h-4 border-2 border-white/40 border-t-white rounded-full spinner"></div>
+          ✓ Vykdyti
+        </button>
+        <button @click="showPreview=false" class="px-5 py-2.5 bg-slate-100 text-slate-700 text-sm font-semibold rounded-xl hover:bg-slate-200 transition">Atgal</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════════════════
+     TOAST STACK
+══════════════════════════════════════════════════ -->
+<div class="fixed bottom-4 right-4 z-[100] space-y-2 pointer-events-none">
+  <template x-for="t in toasts" :key="t.id">
+    <div class="pointer-events-auto flex items-center gap-3 px-4 py-3 rounded-xl shadow-xl max-w-sm text-sm font-medium slide-up"
+         :class="{'bg-green-700 text-white':t.type==='success','bg-red-700 text-white':t.type==='error','bg-slate-800 text-white':t.type==='info','bg-amber-600 text-white':t.type==='warning'}">
+      <span class="flex-1" x-text="t.msg"></span>
+      <button x-show="t.undo" @click="rollback(t.undo);rmToast(t.id)"
+              class="text-white/80 hover:text-white underline text-xs font-bold whitespace-nowrap">Atšaukti</button>
+      <button @click="rmToast(t.id)" class="text-white/50 hover:text-white transition">
+        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+      </button>
+    </div>
+  </template>
+</div>
+
+<!-- ══════════════════════════════════════════════════
+     ALPINE APP
+══════════════════════════════════════════════════ -->
+<script>
+function app() { return {
+  // ── config ──
+  cfg: { url:'http://localhost:8000', key:'' },
+  cfgErr:'', connecting:false, configured:false, me:null,
+
+  // ── nav ──
+  tab:'addresses',
+  navItems:[
+    {id:'addresses',label:'Adresy',icon:'M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6'},
+    {id:'technologies',label:'Technologijos',icon:'M9 3H5a2 2 0 00-2 2v4m6-6h10a2 2 0 012 2v4M9 3v18m0 0h10a2 2 0 002-2V9M9 21H5a2 2 0 01-2-2V9m0 0h18'},
+    {id:'zones',label:'Zonos',icon:'M9 20l-5.447-2.724A1 1 0 013 16.382V5.618a1 1 0 011.447-.894L9 7m0 13l6-3m-6 3V7m6 10l4.553 2.276A1 1 0 0021 18.382V7.618a1 1 0 00-.553-.894L15 4m0 13V4m0 0L9 7'},
+    {id:'operations',label:'Operacijos',icon:'M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2'},
+  ],
+
+  // ── addresses ──
+  q:'', fLocality:'', fType:'',
+  addrs:[], offerings:{}, sel:[], expanded:null,
+  loading:false,
+  addFor:null,
+  newOff:{ technology_id:'', status:'available', max_download_mbps:1000, max_upload_mbps:200, status_since:'' },
+
+  // ── data ──
+  techs:[], zones:[], ops:[],
+  showNewZone:false,
+  nz:{ name:'', priority:100, description:'' },
+
+  // ── bulk ──
+  showBulk:false,
+  bulk:{ technology_id:'', status:'available', max_dl_mbps:1000, max_ul_mbps:500, status_since:'' },
+  prev:null, showPreview:false,
+
+  // ── toasts ──
+  toasts:[],
+
+  async init() {
+    const u=localStorage.getItem('etn_url'), k=localStorage.getItem('etn_key');
+    if(u) this.cfg.url=u;
+    if(k){ this.cfg.key=k; await this.connect(); }
+    const today=new Date().toISOString().split('T')[0];
+    this.bulk.status_since=today; this.newOff.status_since=today;
+  },
+
+  async connect() {
+    this.cfgErr=''; this.connecting=true;
+    try {
+      this.me=await this.api('/api/v1/admin/me');
+      localStorage.setItem('etn_url',this.cfg.url);
+      localStorage.setItem('etn_key',this.cfg.key);
+      this.configured=true;
+      await this.loadTechs();
+    } catch(e){ this.cfgErr='Nepavyko prisijungti: '+e.message; this.configured=false; }
+    finally{ this.connecting=false; }
+  },
+
+  disconnect() {
+    localStorage.removeItem('etn_key');
+    this.configured=false; this.cfg.key=''; this.me=null;
+    this.addrs=[]; this.offerings={}; this.sel=[];
+  },
+
+  async api(path, opts={}) {
+    const r=await fetch(this.cfg.url+path,{
+      ...opts,
+      headers:{'X-API-Key':this.cfg.key,'Content-Type':'application/json',...(opts.headers||{})},
+    });
+    if(!r.ok){ const b=await r.json().catch(()=>({detail:r.statusText})); throw new Error(b.detail||`HTTP ${r.status}`); }
+    return r.status===204?null:r.json();
+  },
+
+  async switchTab(id) {
+    this.tab=id;
+    if(id==='technologies') await this.loadTechs();
+    if(id==='zones') await this.loadZones();
+    if(id==='operations') await this.loadOps();
+  },
+
+  // ── Addresses ──
+  async search() {
+    if(this.q.length<2) return;
+    this.loading=true; this.addrs=[]; this.sel=[]; this.expanded=null; this.offerings={};
+    try {
+      const body={q:this.q,limit:40};
+      if(this.fLocality) body.locality_code=parseInt(this.fLocality);
+      if(this.fType) body.address_type=this.fType;
+      this.addrs=await this.api('/api/v1/admin/addresses/search',{method:'POST',body:JSON.stringify(body)});
+      // Eagerly load offerings for first 15
+      for(const a of this.addrs.slice(0,15)){
+        this.api(`/api/v1/admin/addresses/${a.rc_code}/offerings`)
+          .then(d=>{this.offerings={...this.offerings,[a.rc_code]:d}})
+          .catch(()=>{this.offerings={...this.offerings,[a.rc_code]:[]}});
+      }
+    } catch(e){ this.toast('Paieška nepavyko: '+e.message,'error'); }
+    finally{ this.loading=false; }
+  },
+
+  async expand(rc) {
+    this.expanded=this.expanded===rc?null:rc;
+    if(this.expanded&&!this.offerings[rc]){
+      try{ this.offerings={...this.offerings,[rc]:await this.api(`/api/v1/admin/addresses/${rc}/offerings`)}; }
+      catch(e){ this.offerings={...this.offerings,[rc]:[]}; }
+    }
+  },
+
+  toggle(rc){ const i=this.sel.indexOf(rc); i>=0?this.sel.splice(i,1):this.sel.push(rc); },
+  selAll(){ this.sel=this.sel.length===this.addrs.length?[]:this.addrs.map(a=>a.rc_code); },
+
+  startAdd(rc){ this.addFor=rc; this.newOff={technology_id:'',status:'available',max_download_mbps:1000,max_upload_mbps:200,status_since:new Date().toISOString().split('T')[0]}; },
+
+  async saveOff(rc) {
+    if(!this.newOff.technology_id){ this.toast('Pasirinkite technologiją','warning'); return; }
+    try {
+      const created=await this.api(`/api/v1/admin/addresses/${rc}/offerings`,{method:'POST',body:JSON.stringify(this.newOff)});
+      this.offerings={...this.offerings,[rc]:[...(this.offerings[rc]||[]),created]};
+      this.addFor=null; this.toast('Paslauga pridėta','success');
+    } catch(e){ this.toast('Klaida: '+e.message,'error'); }
+  },
+
+  async delOffering(rc, id) {
+    if(!confirm('Ar tikrai ištrinti šią paslaugą?')) return;
+    try {
+      await this.api(`/api/v1/admin/addresses/offerings/${id}`,{method:'DELETE'});
+      this.offerings={...this.offerings,[rc]:this.offerings[rc].filter(o=>o.id!==id)};
+      this.toast('Paslauga ištrinta','info');
+    } catch(e){ this.toast('Klaida: '+e.message,'error'); }
+  },
+
+  // ── Technologies ──
+  async loadTechs() {
+    try{ this.techs=await this.api('/api/v1/admin/technologies'); }
+    catch(e){ console.error('Technologijų įkėlimas nepavyko:',e); }
+  },
+
+  techName(id){ const t=this.techs.find(t=>t.id===id); return t?t.display_name:(id?id.slice(0,8)+'…':'—'); },
+
+  // ── Zones ──
+  async loadZones() {
+    try{ this.zones=await this.api('/api/v1/admin/zones'); }
+    catch(e){ this.toast('Zonų įkėlimas nepavyko','error'); }
+  },
+
+  async createZone() {
+    if(!this.nz.name){ this.toast('Įveskite pavadinimą','warning'); return; }
+    try {
+      const z=await this.api('/api/v1/admin/zones',{method:'POST',body:JSON.stringify(this.nz)});
+      this.zones=[z,...this.zones]; this.nz={name:'',priority:100,description:''}; this.showNewZone=false;
+      this.toast('Zona sukurta','success');
+    } catch(e){ this.toast('Klaida: '+e.message,'error'); }
+  },
+
+  async delZone(id) {
+    if(!confirm('Ištrinti zoną ir visus jos pasiūlymus?')) return;
+    try {
+      await this.api(`/api/v1/admin/zones/${id}`,{method:'DELETE'});
+      this.zones=this.zones.filter(z=>z.id!==id); this.toast('Zona ištrinta','info');
+    } catch(e){ this.toast('Klaida: '+e.message,'error'); }
+  },
+
+  // ── Operations ──
+  async loadOps() {
+    try{ this.ops=await this.api('/api/v1/admin/bulk-operations'); }
+    catch(e){ this.toast('Operacijų įkėlimas nepavyko','error'); }
+  },
+
+  async rollback(id) {
+    try {
+      await this.api(`/api/v1/admin/bulk/${id}/rollback`,{method:'POST'});
+      this.toast('Operacija atšaukta','info'); this.offerings={};
+      if(this.ops.length) await this.loadOps();
+    } catch(e){ this.toast('Atšaukti nepavyko: '+e.message,'error'); }
+  },
+
+  // ── Bulk ──
+  async preview() {
+    if(!this.bulk.technology_id){ this.toast('Pasirinkite technologiją','warning'); return; }
+    if(!this.sel.length){ this.toast('Pasirinkite bent vieną adresą','warning'); return; }
+    this.loading=true;
+    try {
+      this.prev=await this.api('/api/v1/admin/bulk/preview',{method:'POST',body:JSON.stringify({
+        operation:{ type:'add_offering', technology_id:this.bulk.technology_id, status:this.bulk.status,
+          max_dl_mbps:Number(this.bulk.max_dl_mbps), max_ul_mbps:Number(this.bulk.max_ul_mbps), status_since:this.bulk.status_since },
+        filter:{ rc_codes:this.sel },
+      })});
+      this.showBulk=false; this.showPreview=true;
+    } catch(e){ this.toast('Peržiūra nepavyko: '+e.message,'error'); }
+    finally{ this.loading=false; }
+  },
+
+  async execute() {
+    if(!this.prev?.preview_token) return;
+    this.loading=true;
+    try {
+      const r=await this.api('/api/v1/admin/bulk/execute',{method:'POST',body:JSON.stringify({preview_token:this.prev.preview_token})});
+      this.showPreview=false; this.prev=null; this.sel=[]; this.offerings={};
+      this.toast(`✓ Atnaujinta ${r.modified_count} adresų`,'success',r.bulk_operation_id);
+    } catch(e){ this.toast('Vykdymas nepavyko: '+e.message,'error'); }
+    finally{ this.loading=false; }
+  },
+
+  // ── Helpers ──
+  statusBadge(s){ return {available:'b-available',planned:'b-planned',under_construction:'b-construction',unavailable:'b-unavailable'}[s]||'b-unavailable'; },
+  statusDot(s){ return {available:'bg-green-500',planned:'bg-amber-400',under_construction:'bg-blue-500',unavailable:'bg-slate-300'}[s]||'bg-slate-300'; },
+  fmtDate(s){ try{ return new Date(s).toLocaleString('lt-LT',{dateStyle:'short',timeStyle:'short'}); }catch{ return s; } },
+
+  toast(msg, type='info', undo=null) {
+    const id=Date.now();
+    this.toasts.push({id,msg,type,undo});
+    if(type!=='error') setTimeout(()=>this.rmToast(id), undo?15000:4000);
+  },
+  rmToast(id){ this.toasts=this.toasts.filter(t=>t.id!==id); },
+};}
+</script>
+<!-- Alpine MUST load after app() is defined — no defer -->
+<script src="https://cdn.jsdelivr.net/npm/alpinejs@3.14.3/dist/cdn.min.js"></script>
+</body>
+</html>

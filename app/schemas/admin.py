@@ -231,9 +231,10 @@ class BulkFilter(BaseModel):
     locality_code: int | None = None
     street_codes: list[int] | None = None
     house_no_pattern: str | None = None
+    rc_codes: list[int] | None = None
 
     def is_empty(self) -> bool:
-        return not any([self.locality_code, self.street_codes, self.house_no_pattern])
+        return not any([self.locality_code, self.street_codes, self.house_no_pattern, self.rc_codes])
 
 
 class AddOfferingOperation(BaseModel):

@@ -299,6 +299,44 @@ async def test_list_bulk_operations(client, editor_user, admin_user, locality_co
 
 
 @pytest.mark.integration
+async def test_preview_with_rc_codes(client, editor_user, locality_code, tech):
+    """User selects specific addresses by rc_code in UI, sends them directly."""
+    _, raw = editor_user
+    resp = await client.post(
+        "/api/v1/admin/bulk/preview",
+        json={
+            "operation": _op(tech.id),
+            "filter": {"rc_codes": [82199901, 82199902]},
+        },
+        headers={"X-API-Key": raw},
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["affected_count"] == 2
+    assert data["preview_token"].startswith("tmp_")
+
+
+@pytest.mark.integration
+async def test_execute_with_rc_codes(client, editor_user, locality_code, tech):
+    _, raw = editor_user
+    preview = await client.post(
+        "/api/v1/admin/bulk/preview",
+        json={
+            "operation": _op(tech.id),
+            "filter": {"rc_codes": [82199901, 82199903]},
+        },
+        headers={"X-API-Key": raw},
+    )
+    exec_resp = await client.post(
+        "/api/v1/admin/bulk/execute",
+        json={"preview_token": preview.json()["preview_token"]},
+        headers={"X-API-Key": raw},
+    )
+    assert exec_resp.status_code == 201
+    assert exec_resp.json()["modified_count"] == 2
+
+
+@pytest.mark.integration
 async def test_list_bulk_operations_viewer_allowed(client, viewer_user):
     _, raw = viewer_user
     resp = await client.get("/api/v1/admin/bulk-operations", headers={"X-API-Key": raw})
