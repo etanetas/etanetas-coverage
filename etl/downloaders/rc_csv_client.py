@@ -12,7 +12,7 @@ from pathlib import Path
 
 import httpx
 
-from etl.config import settings
+from etl.config import RC_CSV_URLS, settings
 from etl.utils.download import stream_to_file
 from etl.utils.retry import with_exponential_backoff
 
@@ -29,15 +29,6 @@ _RETRYABLE_DOWNLOAD = (
     httpx.ReadError,
     httpx.RemoteProtocolError,
 )
-
-RC_CSV_URLS = {
-    "counties": "https://www.registrucentras.lt/aduomenys/?byla=adr_apskritys.csv",
-    "municipalities": "https://www.registrucentras.lt/aduomenys/?byla=adr_savivaldybes.csv",
-    "premises": "https://www.registrucentras.lt/aduomenys/?byla=adr_pat_lr.csv",
-    "localities": "https://www.registrucentras.lt/aduomenys/?byla=adr_gyvenamosios_vietoves.csv",
-    "streets": "https://www.registrucentras.lt/aduomenys/?byla=adr_gatves.csv",
-    "addresses": "https://www.registrucentras.lt/aduomenys/?byla=adr_stat_lr.csv",
-}
 
 
 class RCCsvClient:

@@ -12,7 +12,7 @@ class Settings(BaseSettings):
     database_url: str
 
     # === Spinta API ===
-    spinta_base_url: str
+    spinta_base_url: str = "https://get.data.gov.lt/datasets/gov/rc/ar"
     spinta_timeout_seconds: float = 120.0
     spinta_connect_timeout_seconds: float = 10.0
     spinta_max_retries: int = 10
@@ -44,3 +44,12 @@ class Settings(BaseSettings):
 
 
 settings = Settings()
+
+RC_CSV_URLS: dict[str, str] = {
+    "counties": "https://www.registrucentras.lt/aduomenys/?byla=adr_apskritys.csv",
+    "municipalities": "https://www.registrucentras.lt/aduomenys/?byla=adr_savivaldybes.csv",
+    "localities": "https://www.registrucentras.lt/aduomenys/?byla=adr_gyvenamosios_vietoves.csv",
+    "streets": "https://www.registrucentras.lt/aduomenys/?byla=adr_gatves.csv",
+    "addresses": "https://www.registrucentras.lt/aduomenys/?byla=adr_stat_lr.csv",
+    "premises": "https://www.registrucentras.lt/aduomenys/?byla=adr_pat_lr.csv",
+}
