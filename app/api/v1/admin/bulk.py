@@ -2,11 +2,11 @@ import json
 import logging
 import secrets
 import uuid
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Request
-from sqlalchemy import select, text
+from sqlalchemy import delete, select, text
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -15,8 +15,10 @@ from app.auth import require_role
 from app.dependencies import get_db
 from app.limiter import limiter
 from app.models.address import Address
-from app.models.admin import BulkOperations, User
+from app.models.admin import BulkOperations, BulkPreviewToken, User
 from app.models.service import AddressOffering
+
+from app.db.address_labels import _ADDR_JOINS, _FULL_ADDRESS, _HOUSE, _LOCALITY_LABEL, _MUNI_SHORT, _STREET_WITH_TYPE  # noqa: F401
 
 log = logging.getLogger(__name__)
 from app.schemas.admin import (
@@ -34,31 +36,7 @@ from app.schemas.admin import (
 
 router = APIRouter(prefix="/api/v1/admin", tags=["admin-bulk"])
 
-# In-memory preview token store.  Acceptable for single-process; the 5-min
-# window is short enough that a restart simply invalidates open previews.
-# WARNING: does NOT work with uvicorn --workers > 1 — run with --workers 1.
-_preview_store: dict[str, dict] = {}
-
 _EDITOR_RATE_LIMIT = 5000  # addresses per minute per editor
-
-_MUNI_SHORT = "replace(replace(m.name, ' rajono', ' raj.'), ' miesto', ' m.')"
-_LOCALITY_LABEL = f"""
-    CASE l.type WHEN 'miestas' THEN l.name
-    ELSE l.name || COALESCE(' ' || l.type_abbr, '') || ', ' || ({_MUNI_SHORT}) END
-"""
-_STREET_WITH_TYPE = "s.name || COALESCE(' ' || s.type_abbr, '')"
-_HOUSE = "a.house_no || COALESCE(' k.' || a.corpus_no, '') || COALESCE('-' || a.flat_no, '')"
-_FULL_ADDRESS = f"""
-    CASE WHEN s.name IS NOT NULL
-         THEN ({_STREET_WITH_TYPE}) || ' ' || ({_HOUSE}) || ', ' || ({_LOCALITY_LABEL})
-         ELSE ({_HOUSE}) || ', ' || ({_LOCALITY_LABEL})
-    END
-"""
-_ADDR_JOINS = """
-    LEFT JOIN streets s ON s.rc_code = a.street_code
-    JOIN localities l ON l.rc_code = a.locality_code
-    JOIN municipalities m ON m.rc_code = l.muni_code
-"""
 
 
 @router.post("/bulk/preview", response_model=BulkPreviewResponse)
@@ -77,13 +55,22 @@ async def bulk_preview(
     sample = await _build_sample(db, rc_codes[:5], body.operation)
 
     token = "tmp_" + secrets.token_urlsafe(16)
-    _preview_store[token] = {
-        "user_id": str(current_user.id),
-        "operation": body.operation.model_dump(),
-        "rc_codes": rc_codes,
-        "expires_at": datetime.now() + timedelta(minutes=5),
-    }
-    _evict_expired()
+    token_row = BulkPreviewToken(
+        token=token,
+        user_id=current_user.id,
+        payload={
+            "user_id": str(current_user.id),
+            "operation": body.operation.model_dump(mode="json"),
+            "filter": body.filter.model_dump(mode="json"),
+            "rc_codes": rc_codes,
+        },
+        expires_at=datetime.now() + timedelta(minutes=5),
+    )
+    db.add(token_row)
+    await db.execute(
+        delete(BulkPreviewToken).where(BulkPreviewToken.expires_at < datetime.now())
+    )
+    await db.commit()
 
     return BulkPreviewResponse(affected_count=len(rc_codes), sample=sample, preview_token=token)
 
@@ -96,7 +83,7 @@ async def bulk_execute(
     current_user: Annotated[User, Depends(require_role("editor", "admin"))],
     db: Annotated[AsyncSession, Depends(get_db)],
 ) -> BulkExecuteResponse:
-    preview = _consume_token(body.preview_token, current_user.id)
+    preview = await _consume_token(body.preview_token, current_user.id, db)
 
     rc_codes: list[int] = preview["rc_codes"]
 
@@ -114,7 +101,7 @@ async def bulk_execute(
     bulk_op = BulkOperations(
         user_id=current_user.id,
         operation_type=op_type,
-        filter_criteria={},
+        filter_criteria=preview.get("filter", {}),
         affected_count=len(rc_codes),
         rollback_data=None,
     )
@@ -204,7 +191,6 @@ async def bulk_rollback(
 
     elif rd_type == "change_offering":
         # Restore old values via ORM (avoids asyncpg None CAST issues)
-        from datetime import date as _date
         old_values: list[dict] = rd.get("old_values", [])
         tech_uuid = uuid.UUID(tech_id) if tech_id else None
         for old in old_values:
@@ -220,15 +206,14 @@ async def bulk_rollback(
             ao.status = old["status"]
             ao.max_download_mbps = old["max_download_mbps"]
             ao.max_upload_mbps = old["max_upload_mbps"]
-            ao.status_since = _date.fromisoformat(old["status_since"]) if old.get("status_since") else None
-            ao.planned_until = _date.fromisoformat(old["planned_until"]) if old.get("planned_until") else None
+            ao.status_since = date.fromisoformat(old["status_since"]) if old.get("status_since") else None
+            ao.planned_until = date.fromisoformat(old["planned_until"]) if old.get("planned_until") else None
             ao.notes = old.get("notes")
             ao.updated_at = datetime.now()
         affected = len(old_values)
 
     elif rd_type == "remove_offering":
         # Recreate deleted offerings via ORM
-        from datetime import date as _date
         deleted: list[dict] = rd.get("deleted_offerings", [])
         tech_uuid = uuid.UUID(tech_id) if tech_id else None
         for d in deleted:
@@ -238,8 +223,8 @@ async def bulk_rollback(
                 status=d["status"],
                 max_download_mbps=d["max_download_mbps"],
                 max_upload_mbps=d["max_upload_mbps"],
-                status_since=_date.fromisoformat(d["status_since"]) if d.get("status_since") else None,
-                planned_until=_date.fromisoformat(d["planned_until"]) if d.get("planned_until") else None,
+                status_since=date.fromisoformat(d["status_since"]) if d.get("status_since") else None,
+                planned_until=date.fromisoformat(d["planned_until"]) if d.get("planned_until") else None,
                 notes=d.get("notes"),
                 created_by=uuid.UUID(d["created_by"]),
             )
@@ -583,20 +568,20 @@ async def _recent_modified_count(db: AsyncSession, user_id: uuid.UUID) -> int:
     return int(result.scalar() or 0)
 
 
-def _consume_token(token: str, user_id: uuid.UUID) -> dict:
-    data = _preview_store.pop(token, None)
-    if data is None:
+async def _consume_token(token: str, user_id: uuid.UUID, db: AsyncSession) -> dict:
+    result = await db.execute(
+        select(BulkPreviewToken).where(BulkPreviewToken.token == token)
+    )
+    token_row = result.scalar_one_or_none()
+    if token_row is None:
         raise HTTPException(status_code=422, detail="Invalid or expired preview token")
-    if data["user_id"] != str(user_id):
-        _preview_store[token] = data  # put it back
+    if token_row.user_id != user_id:
         raise HTTPException(status_code=403, detail="Preview token belongs to a different user")
-    if datetime.now() > data["expires_at"]:
+    if datetime.now() > token_row.expires_at:
+        await db.delete(token_row)
+        await db.flush()
         raise HTTPException(status_code=422, detail="Preview token expired (5 min limit)")
-    return data
-
-
-def _evict_expired() -> None:
-    now = datetime.now()
-    expired = [k for k, v in _preview_store.items() if now > v["expires_at"]]
-    for k in expired:
-        del _preview_store[k]
+    payload = dict(token_row.payload)
+    await db.delete(token_row)
+    await db.flush()
+    return payload

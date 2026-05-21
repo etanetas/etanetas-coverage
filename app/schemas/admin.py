@@ -202,6 +202,7 @@ class TechnologyTypeOut(BaseModel):
     public_name: str
     sort_order: int
     active: bool
+    map_color: str
 
     model_config = {"from_attributes": True}
 
@@ -211,6 +212,7 @@ class TechnologyTypeUpdate(BaseModel):
     public_name: str | None = None
     sort_order: int | None = None
     active: bool | None = None
+    map_color: str | None = None
 
 
 class TechnologyOut(BaseModel):
@@ -349,3 +351,34 @@ class AuditLogOut(BaseModel):
     at: datetime
 
     model_config = {"from_attributes": True}
+
+
+# ---------------------------------------------------------------------------
+# Coverage statistics (used by admin/stats.py)
+# ---------------------------------------------------------------------------
+
+
+class StatusBreakdown(BaseModel):
+    status: str
+    count: int
+
+
+class UncoveredLocality(BaseModel):
+    locality_code: int
+    locality_name: str
+    municipality: str
+    uncovered_count: int
+
+
+class CoverageStats(BaseModel):
+    total_buildings: int
+    covered_buildings: int
+    address_offerings_count: int
+    zones_count: int
+    zones_with_polygon: int
+    zone_offerings_count: int
+    addresses_by_status: list[StatusBreakdown]
+    top_uncovered_localities: list[UncoveredLocality]
+    scope: str
+    scope_label: str
+    scope_municipalities: list[str]

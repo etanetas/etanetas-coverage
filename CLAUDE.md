@@ -134,7 +134,7 @@ Nightly sync uses **Spinta `:changes`** endpoint (small delta, fast).
 
 ## Production deployment
 
-**Workers:** always run with `--workers 1`. The bulk preview token store (`_preview_store` in `app/api/v1/admin/bulk.py`) is in-memory per-process — multiple workers will cause preview tokens to be invisible to other workers, breaking bulk execute.
+**Workers:** multiple workers supported. Bulk preview tokens are stored in the `bulk_preview_tokens` DB table — no in-memory state.
 
 ```bash
 uv run uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 1

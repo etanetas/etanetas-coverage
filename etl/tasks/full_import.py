@@ -18,6 +18,7 @@ Steps (in order):
 
 import asyncio
 import logging
+import socket
 from collections.abc import AsyncIterator
 from typing import Any
 
@@ -25,6 +26,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import AsyncSessionLocal
 from app.logging_config import configure_logging
+from etl.notifications import send_alert
 from app.models.address import Address, County, Locality, Municipality, Street
 from etl.config import settings
 from etl.downloaders.rc_address_points_client import RCAddressPointsClient
@@ -271,6 +273,18 @@ async def run(force: bool = False) -> None:
 
     Idempotent: re-running after success is a no-op (all steps already done).
     """
+    try:
+        await _run(force=force)
+    except Exception:
+        log.exception("Full import failed")
+        await send_alert(
+            f"❌ Full import FAILED on {socket.gethostname()}\n"
+            f"Check logs. Re-run: uv run python -m etl.tasks.full_import"
+        )
+        raise
+
+
+async def _run(force: bool = False) -> None:
     rc = RCCsvClient()
     rc_zip = RCAddressPointsClient(settings.rc_geojson_url)
     rc_geo = RCGeoJsonClient()

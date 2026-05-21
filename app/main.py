@@ -1,6 +1,7 @@
 import logging
 
 from fastapi import FastAPI
+from fastapi.responses import JSONResponse
 
 log = logging.getLogger(__name__)
 from fastapi.middleware.cors import CORSMiddleware
@@ -39,7 +40,8 @@ app.add_middleware(RequestIDMiddleware)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origins,
-    allow_methods=["GET", "POST", "PUT", "DELETE"],
+    # Include OPTIONS so browser preflight requests are handled by CORS middleware.
+    allow_methods=["*"],
     allow_headers=["*"],
 )
 configure_telemetry(app, engine)
@@ -64,4 +66,4 @@ async def health():
         return {"status": "ok", "db": "ok"}
     except Exception:
         log.exception("Health check DB error")
-        return {"status": "degraded", "db": "unhealthy"}, 503
+        return JSONResponse(status_code=503, content={"status": "degraded", "db": "unhealthy"})

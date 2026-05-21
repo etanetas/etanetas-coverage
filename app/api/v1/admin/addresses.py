@@ -3,6 +3,7 @@ from datetime import datetime
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -19,30 +20,12 @@ from app.schemas.admin import (
     AddressOfferingUpdate,
     AddressSearchRequest,
     AddressSearchResult,
+    ZoneOfferingOut,
 )
 
-router = APIRouter(prefix="/api/v1/admin/addresses", tags=["admin-addresses"])
+from app.db.address_labels import _ADDR_JOINS, _FULL_ADDRESS, _HOUSE, _LOCALITY_LABEL, _MUNI_SHORT, _STREET_WITH_TYPE  # noqa: F401
 
-_MUNI_SHORT = "replace(replace(m.name, ' rajono', ' raj.'), ' miesto', ' m.')"
-_LOCALITY_LABEL = f"""
-    CASE l.type
-        WHEN 'miestas' THEN l.name
-        ELSE l.name || COALESCE(' ' || l.type_abbr, '') || ', ' || ({_MUNI_SHORT})
-    END
-"""
-_STREET_WITH_TYPE = "s.name || COALESCE(' ' || s.type_abbr, '')"
-_HOUSE = "a.house_no || COALESCE(' k.' || a.corpus_no, '') || COALESCE('-' || a.flat_no, '')"
-_FULL_ADDRESS = f"""
-    CASE WHEN s.name IS NOT NULL
-         THEN ({_STREET_WITH_TYPE}) || ' ' || ({_HOUSE}) || ', ' || ({_LOCALITY_LABEL})
-         ELSE ({_HOUSE}) || ', ' || ({_LOCALITY_LABEL})
-    END
-"""
-_ADDR_JOINS = """
-    LEFT JOIN streets s ON s.rc_code = a.street_code
-    JOIN localities l ON l.rc_code = a.locality_code
-    JOIN municipalities m ON m.rc_code = l.muni_code
-"""
+router = APIRouter(prefix="/api/v1/admin/addresses", tags=["admin-addresses"])
 
 
 @router.post("/search", response_model=list[AddressSearchResult])
@@ -70,7 +53,15 @@ async def search_addresses(
         filters.append("a.point IS NOT NULL")
     if body.has_offering:
         filters.append(
+            "("
             "EXISTS (SELECT 1 FROM address_offerings ao WHERE ao.address_code = a.rc_code)"
+            " OR EXISTS ("
+            "    SELECT 1 FROM service_zones sz"
+            "    JOIN zone_offerings zo ON zo.zone_id = sz.id"
+            "    WHERE sz.polygon IS NOT NULL AND a.point IS NOT NULL"
+            "      AND ST_Contains(sz.polygon::geometry, a.point::geometry)"
+            ")"
+            ")"
         )
 
     where = " AND ".join(filters)
@@ -125,6 +116,79 @@ async def get_address(
     if row is None:
         raise HTTPException(status_code=404, detail="Address not found")
     return AddressDetail(**row)
+
+
+class ZoneCoverageItem(BaseModel):
+    zone_id: uuid.UUID
+    zone_name: str
+    zone_priority: int
+    offerings: list[ZoneOfferingOut]
+
+
+@router.get("/{rc_code}/zone-coverage", response_model=list[ZoneCoverageItem])
+async def get_address_zone_coverage(
+    rc_code: int,
+    current_user: Annotated[User, Depends(require_role("viewer", "editor", "admin"))],
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> list[ZoneCoverageItem]:
+    """Return zones whose polygon contains this address point, with their offerings."""
+    addr = await db.execute(
+        select(Address.rc_code).where(Address.rc_code == rc_code, Address.deleted_at.is_(None))
+    )
+    if addr.scalar_one_or_none() is None:
+        raise HTTPException(status_code=404, detail="Address not found")
+
+    rows = (await db.execute(text("""
+        SELECT
+            sz.id AS zone_id,
+            sz.name AS zone_name,
+            sz.priority AS zone_priority,
+            zo.id AS offering_id,
+            zo.zone_id AS offering_zone_id,
+            zo.technology_id,
+            zo.status,
+            zo.max_download_mbps,
+            zo.max_upload_mbps,
+            zo.status_since,
+            zo.planned_until,
+            zo.notes,
+            zo.created_at,
+            zo.updated_at
+        FROM addresses a
+        JOIN service_zones sz ON sz.polygon IS NOT NULL
+            AND ST_Contains(sz.polygon::geometry, a.point::geometry)
+        LEFT JOIN zone_offerings zo ON zo.zone_id = sz.id
+        WHERE a.rc_code = :rc_code AND a.deleted_at IS NULL
+        ORDER BY sz.priority DESC, sz.name
+    """), {"rc_code": rc_code})).mappings().all()
+
+    by_zone: dict[uuid.UUID, ZoneCoverageItem] = {}
+    for row in rows:
+        zid = row["zone_id"]
+        if zid not in by_zone:
+            by_zone[zid] = ZoneCoverageItem(
+                zone_id=zid,
+                zone_name=row["zone_name"],
+                zone_priority=row["zone_priority"],
+                offerings=[],
+            )
+        if row["offering_id"] is not None:
+            by_zone[zid].offerings.append(
+                ZoneOfferingOut(
+                    id=row["offering_id"],
+                    zone_id=row["offering_zone_id"],
+                    technology_id=row["technology_id"],
+                    status=row["status"],
+                    max_download_mbps=row["max_download_mbps"],
+                    max_upload_mbps=row["max_upload_mbps"],
+                    status_since=row["status_since"],
+                    planned_until=row["planned_until"],
+                    notes=row["notes"],
+                    created_at=row["created_at"],
+                    updated_at=row["updated_at"],
+                )
+            )
+    return list(by_zone.values())
 
 
 @router.get("/{rc_code}/offerings", response_model=list[AddressOfferingOut])

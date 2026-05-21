@@ -7,6 +7,19 @@ from sqlalchemy.orm import Mapped, mapped_column
 from app.models.base import Base
 
 
+class BulkPreviewToken(Base):
+    __tablename__ = "bulk_preview_tokens"
+    __table_args__ = (
+        Index("idx_bulk_preview_tokens_expires", "expires_at"),
+    )
+
+    token: Mapped[str] = mapped_column(Text, primary_key=True)
+    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
+    payload: Mapped[dict] = mapped_column(JSONB)
+    expires_at: Mapped[datetime] = mapped_column(TIMESTAMP)
+    created_at: Mapped[datetime] = mapped_column(TIMESTAMP, default=datetime.now)
+
+
 class User(Base):
     __tablename__ = "users"
     __table_args__ = (
@@ -20,6 +33,7 @@ class User(Base):
     active: Mapped[bool] = mapped_column(Boolean)
     lms_username: Mapped[str | None] = mapped_column(Text, unique=True)
     created_at: Mapped[datetime] = mapped_column(TIMESTAMP, default=datetime.now)
+    updated_at: Mapped[datetime | None] = mapped_column(TIMESTAMP, onupdate=datetime.now)
 
 
 class ApiKey(Base):

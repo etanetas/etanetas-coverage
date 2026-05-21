@@ -58,6 +58,12 @@ async def map_addresses(
                     'label', COALESCE(s.name || ' ' || a.house_no, a.house_no),
                     'has_address_offering', EXISTS(
                         SELECT 1 FROM address_offerings ao WHERE ao.address_code = a.rc_code
+                    ),
+                    'has_zone_offering', EXISTS(
+                        SELECT 1 FROM service_zones z
+                        JOIN zone_offerings zo ON zo.zone_id = z.id
+                        WHERE z.polygon IS NOT NULL
+                          AND ST_Contains(z.polygon::geometry, a.point::geometry)
                     )
                 )
             )), '[]'::json)
@@ -113,6 +119,7 @@ async def map_zones_geojson(
                             SELECT json_agg(json_build_object(
                                 'status', zo.status,
                                 'technology_type', tt.code,
+                                'technology_color', tt.map_color,
                                 'public_name', tt.public_name,
                                 'max_download_mbps', zo.max_download_mbps,
                                 'planned_until', zo.planned_until

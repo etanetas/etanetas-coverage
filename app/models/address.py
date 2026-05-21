@@ -58,6 +58,7 @@ class Street(Base):
             postgresql_using="gin",
             postgresql_ops={"full_name": "gin_trgm_ops"},
         ),
+        Index("idx_streets_axis", "axis", postgresql_using="gist"),
     )
 
     rc_code: Mapped[int] = mapped_column(primary_key=True)
