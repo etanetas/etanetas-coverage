@@ -20,8 +20,8 @@ class TestStepsToRun:
         assert "addresses" in result
         assert "cid" in result
 
-    def test_after_premises_only_geo_and_cid_remain(self):
-        result = steps_to_run("premises")
+    def test_after_addresses_only_geo_and_cid_remain(self):
+        result = steps_to_run("addresses")
         assert result == {"boundaries", "axes", "cid"}
 
     def test_after_axes_only_cid_remains(self):

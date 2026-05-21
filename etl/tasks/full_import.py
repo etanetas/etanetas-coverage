@@ -10,7 +10,7 @@ Steps (in order):
     4. streets               ← adr_gatves.csv
     5. points                ← adr_gra_adresai_LT.zip (GeoJSON → point_lookup)
     6. addresses             ← adr_stat_lr.csv (buildings/plots, uses point_lookup)
-    7. premises              ← adr_pat_lr.csv (apartments, uses stat_lookup + point_lookup)
+    7. [SKIPPED] premises    ← ISP operates at building level; per-apartment records not needed
     8. boundaries            ← adr_gra_gyvenamosios_vietoves.json (UPDATE localities.boundary)
     9. axes                  ← adr_gra_gatves.json (UPDATE streets.axis)
    10. cid                   ← Spinta head _cid → etl_state (sync cursor)
@@ -159,11 +159,10 @@ async def _build_point_lookup(rc_zip: RCAddressPointsClient) -> dict[int, str]:
 
 async def _import_addresses(
     session: AsyncSession, rc: RCCsvClient, point_lookup: dict[int, str]
-) -> dict[int, dict[str, Any]]:
-    """Import stat addresses (buildings/plots). Returns stat_lookup for use by premises step."""
+) -> None:
+    """Import stat addresses (buildings/plots)."""
     log.info("Addresses (stat)...")
     stat_path = await rc.download("addresses")
-    stat_lookup: dict[int, dict[str, Any]] = {}
 
     async def _rows():
         for row in rc.iter_rows(stat_path):
@@ -172,18 +171,10 @@ async def _import_addresses(
             mapped = map_address_csv(row, point_lookup)
             if mapped is None:
                 continue
-            stat_lookup[mapped["rc_code"]] = {
-                "locality_code": mapped["locality_code"],
-                "street_code": mapped["street_code"],
-                "postal_code": mapped["postal_code"],
-                "house_no": mapped["house_no"],
-                "corpus_no": mapped.get("corpus_no"),
-            }
             yield mapped
 
     n = await upsert_all(session, Address, _rows())
     log.info("  %d rows", n)
-    return stat_lookup
 
 
 def _rebuild_stat_lookup(
@@ -310,11 +301,11 @@ async def run(force: bool = False) -> None:
             else:
                 log.info("%s... skipped (already done)", step_name.capitalize())
 
-        # --- Step 5: point lookup (built in memory; needed by addresses/premises) ---
-        # If "points" step is skipped but addresses or premises still need to run,
+        # --- Step 5: point lookup (built in memory; needed by addresses) ---
+        # If "points" step is skipped but addresses still need to run,
         # we MUST rebuild the lookup from cache (it's not persisted).
         point_lookup: dict[int, str] = {}
-        needs_point_lookup = bool({"points", "addresses", "premises"} & todo)
+        needs_point_lookup = bool({"points", "addresses"} & todo)
         if needs_point_lookup:
             point_lookup = await _build_point_lookup(rc_zip)
             if "points" in todo:
@@ -322,24 +313,14 @@ async def run(force: bool = False) -> None:
         else:
             log.info("Points... skipped (already done)")
 
-        # --- Step 6: stat addresses + stat_lookup (needed by premises) ---
-        stat_lookup: dict[int, dict[str, Any]] = {}
+        # --- Step 6: stat addresses (buildings/plots only) ---
         if "addresses" in todo:
-            stat_lookup = await _import_addresses(session, rc, point_lookup)
+            await _import_addresses(session, rc, point_lookup)
             await save_completed_step(session, "addresses")
-        elif "premises" in todo:
-            # premises needs stat_lookup; rebuild from cache without inserting
-            stat_path = await rc.download("addresses")
-            stat_lookup = _rebuild_stat_lookup(rc, stat_path, point_lookup)
         else:
             log.info("Addresses (stat)... skipped (already done)")
 
-        # --- Step 7: premises ---
-        if "premises" in todo:
-            await _import_premises(session, rc, stat_lookup, point_lookup)
-            await save_completed_step(session, "premises")
-        else:
-            log.info("Premises... skipped (already done)")
+        # --- Step 7: premises --- SKIPPED (ISP operates at building level) ---
 
     # New session for geometry updates (separates concerns + lets the addresses txn close)
     async with AsyncSessionLocal() as session:

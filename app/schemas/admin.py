@@ -15,6 +15,7 @@ class UserOut(BaseModel):
     email: str
     role: str
     active: bool
+    lms_username: str | None
     created_at: datetime
 
     model_config = {"from_attributes": True}
@@ -30,6 +31,7 @@ class UserUpdate(BaseModel):
     email: EmailStr | None = None
     role: Literal["admin", "editor", "viewer"] | None = None
     active: bool | None = None
+    lms_username: str | None = None
 
 
 class ApiKeyOut(BaseModel):
@@ -142,6 +144,15 @@ class ZoneOfferingCreate(OfferingBase):
     pass
 
 
+class ZoneOfferingUpdate(BaseModel):
+    status: OfferingStatus | None = None
+    max_download_mbps: int | None = None
+    max_upload_mbps: int | None = None
+    status_since: date | None = None
+    planned_until: date | None = None
+    notes: str | None = None
+
+
 # ---------------------------------------------------------------------------
 # Zones
 # ---------------------------------------------------------------------------
@@ -153,9 +164,16 @@ class ZoneOut(BaseModel):
     description: str | None
     priority: int
     has_polygon: bool
+    polygon_geojson: dict | None  # simplified GeoJSON for map rendering (may be None)
     created_at: datetime
 
     model_config = {"from_attributes": True}
+
+
+class ZoneDetail(ZoneOut):
+    """Full zone detail including offerings and address count."""
+    offerings: list[ZoneOfferingOut]
+    address_count: int
 
 
 class ZoneCreate(BaseModel):
@@ -258,8 +276,32 @@ class AddOfferingOperation(BaseModel):
     notes: str | None = None
 
 
+class ChangeOfferingOperation(BaseModel):
+    """Update existing address_offerings for a given technology. Any field left None is not changed."""
+    type: Literal["change_offering"]
+    technology_id: uuid.UUID
+    new_status: OfferingStatus | None = None
+    new_max_dl_mbps: int | None = None
+    new_max_ul_mbps: int | None = None
+    new_status_since: date | None = None
+    new_planned_until: date | None = None  # to clear, use sentinel string "null" — see _execute
+    new_notes: str | None = None
+
+
+class RemoveOfferingOperation(BaseModel):
+    """Delete address_offerings for a given technology from filtered addresses."""
+    type: Literal["remove_offering"]
+    technology_id: uuid.UUID
+
+
+BulkOperation = Annotated[
+    AddOfferingOperation | ChangeOfferingOperation | RemoveOfferingOperation,
+    Field(discriminator="type"),
+]
+
+
 class BulkPreviewRequest(BaseModel):
-    operation: AddOfferingOperation
+    operation: BulkOperation
     filter: BulkFilter
 
 

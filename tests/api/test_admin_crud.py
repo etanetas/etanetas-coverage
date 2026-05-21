@@ -405,3 +405,74 @@ async def test_zone_offering_duplicate_409(client, editor_user, seed_zone, seed_
     await client.post(f"/api/v1/admin/zones/{zone_id}/offerings", json=payload, headers={"X-API-Key": raw})
     resp = await client.post(f"/api/v1/admin/zones/{zone_id}/offerings", json=payload, headers={"X-API-Key": raw})
     assert resp.status_code == 409
+
+
+@pytest.mark.integration
+async def test_update_zone_offering(client, editor_user, seed_zone, seed_tech):
+    _, raw = editor_user
+    zone_id, _ = seed_zone
+    _, tech = seed_tech
+    create_resp = await client.post(
+        f"/api/v1/admin/zones/{zone_id}/offerings",
+        json={"technology_id": str(tech.id), "status": "planned", "max_download_mbps": 100, "max_upload_mbps": 50, "status_since": "2026-01-01"},
+        headers={"X-API-Key": raw},
+    )
+    assert create_resp.status_code == 201
+    offering_id = create_resp.json()["id"]
+
+    update_resp = await client.put(
+        f"/api/v1/admin/zones/offerings/{offering_id}",
+        json={"status": "available", "max_download_mbps": 500},
+        headers={"X-API-Key": raw},
+    )
+    assert update_resp.status_code == 200
+    assert update_resp.json()["status"] == "available"
+    assert update_resp.json()["max_download_mbps"] == 500
+
+
+@pytest.mark.integration
+async def test_delete_zone_offering(client, editor_user, seed_zone, seed_tech):
+    _, raw = editor_user
+    zone_id, _ = seed_zone
+    _, tech = seed_tech
+    create_resp = await client.post(
+        f"/api/v1/admin/zones/{zone_id}/offerings",
+        json={"technology_id": str(tech.id), "status": "available", "max_download_mbps": 200, "max_upload_mbps": 100, "status_since": "2026-01-01"},
+        headers={"X-API-Key": raw},
+    )
+    offering_id = create_resp.json()["id"]
+
+    del_resp = await client.delete(f"/api/v1/admin/zones/offerings/{offering_id}", headers={"X-API-Key": raw})
+    assert del_resp.status_code == 204
+
+    list_resp = await client.get(f"/api/v1/admin/zones/{zone_id}/offerings", headers={"X-API-Key": raw})
+    assert not any(o["id"] == offering_id for o in list_resp.json())
+
+
+@pytest.mark.integration
+async def test_list_offerings_returns_404_for_deleted_address(client, admin_user, db_session, seed_tech):
+    """list_address_offerings must return 404 if the address is soft-deleted."""
+    from sqlalchemy import text
+    _, raw = admin_user
+    _, tech = seed_tech
+    # Seed a building address
+    rc = 83199901
+    stmts = [
+        "INSERT INTO counties (rc_code, name, synced_at) VALUES (83001, 'Del Apskritis', NOW()) ON CONFLICT DO NOTHING",
+        "INSERT INTO municipalities (rc_code, county_code, name, type, synced_at) VALUES (83100, 83001, 'Del Sav.', 'rajono', NOW()) ON CONFLICT DO NOTHING",
+        "INSERT INTO localities (rc_code, muni_code, name, type, synced_at) VALUES (83100, 83100, 'Delinkai', 'miestas', NOW()) ON CONFLICT DO NOTHING",
+        f"INSERT INTO addresses (rc_code, locality_code, house_no, postal_code, synced_at, point, address_type) VALUES ({rc}, 83100, '9', '00001', NOW(), ST_GeomFromEWKT('SRID=4326;POINT(25.7 54.7)'), 'building') ON CONFLICT DO NOTHING",
+    ]
+    for s in stmts:
+        await db_session.execute(text(s))
+
+    # Address exists → 200
+    resp = await client.get(f"/api/v1/admin/addresses/{rc}/offerings", headers={"X-API-Key": raw})
+    assert resp.status_code == 200
+
+    # Soft-delete the address
+    await db_session.execute(text(f"UPDATE addresses SET deleted_at = NOW() WHERE rc_code = {rc}"))
+
+    # Now must return 404
+    resp2 = await client.get(f"/api/v1/admin/addresses/{rc}/offerings", headers={"X-API-Key": raw})
+    assert resp2.status_code == 404

@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.audit import log_action
 from app.auth import get_current_user, require_role
+from app.config import settings
 from app.dependencies import get_db
 from app.models.admin import ApiKey, User
 from app.schemas.admin import ApiKeyCreate, ApiKeyCreated, ApiKeyOut, UserCreate, UserOut, UserUpdate
@@ -69,6 +70,8 @@ async def update_user(
         user.role = body.role
     if body.active is not None:
         user.active = body.active
+    if "lms_username" in changes:
+        user.lms_username = body.lms_username  # allow setting to None
 
     await log_action(db, current_user.id, "user", str(user_id), "update", changes)
     await db.commit()
@@ -123,7 +126,7 @@ async def create_api_key(
     await _require_user(db, user_id)
 
     raw_key = "etn_pk_" + secrets.token_urlsafe(32)
-    key_hash = bcrypt.hashpw(raw_key.encode(), bcrypt.gensalt()).decode()
+    key_hash = bcrypt.hashpw(raw_key.encode(), bcrypt.gensalt(rounds=settings.bcrypt_rounds)).decode()
 
     api_key = ApiKey(user_id=user_id, key_hash=key_hash, name=body.name)
     db.add(api_key)
@@ -156,6 +159,20 @@ async def revoke_api_key(
 
     key.revoked_at = datetime.now()
     await db.commit()
+
+
+@router.get("/users/by-lms-username/{lms_username}", response_model=UserOut)
+async def get_user_by_lms_username(
+    lms_username: str,
+    current_user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> User:
+    """Look up a user by their LMS username — used by the LMS plugin to resolve sessions."""
+    result = await db.execute(select(User).where(User.lms_username == lms_username, User.active.is_(True)))
+    user = result.scalar_one_or_none()
+    if user is None:
+        raise HTTPException(status_code=404, detail="No active user linked to this LMS username")
+    return user
 
 
 async def _require_user(db: AsyncSession, user_id: uuid.UUID) -> User:

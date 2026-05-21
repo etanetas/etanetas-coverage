@@ -126,10 +126,10 @@ class TestAddressSampleFidelity:
             assert result is not None
             assert result.locality_code == int(row["GYV_KODAS"])
 
-    async def test_total_address_count_matches_stat_plus_premises(self, db_session):
+    async def test_total_address_count_matches_stat(self, db_session):
+        """Premises were dropped — ETL now loads only buildings (stat). DB count should match stat CSV."""
         stat_rows = [r for r in _csv_rows("addresses") if r.get("NR", "").strip()]
-        pat_rows = [r for r in _csv_rows("premises") if r.get("PATALPOS_NR", "").strip()]
-        source_total = len(stat_rows) + len(pat_rows)
+        source_total = len(stat_rows)
         db_total = await db_session.scalar(
             select(func.count()).select_from(Address).where(Address.deleted_at.is_(None))
         )

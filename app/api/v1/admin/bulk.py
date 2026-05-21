@@ -1,10 +1,11 @@
 import json
+import logging
 import secrets
 import uuid
 from datetime import datetime, timedelta
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy import select, text
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -12,8 +13,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.audit import log_action
 from app.auth import require_role
 from app.dependencies import get_db
+from app.limiter import limiter
+from app.models.address import Address
 from app.models.admin import BulkOperations, User
 from app.models.service import AddressOffering
+
+log = logging.getLogger(__name__)
 from app.schemas.admin import (
     AddOfferingOperation,
     BulkExecuteRequest,
@@ -23,12 +28,15 @@ from app.schemas.admin import (
     BulkPreviewRequest,
     BulkPreviewResponse,
     BulkSampleItem,
+    ChangeOfferingOperation,
+    RemoveOfferingOperation,
 )
 
 router = APIRouter(prefix="/api/v1/admin", tags=["admin-bulk"])
 
 # In-memory preview token store.  Acceptable for single-process; the 5-min
 # window is short enough that a restart simply invalidates open previews.
+# WARNING: does NOT work with uvicorn --workers > 1 — run with --workers 1.
 _preview_store: dict[str, dict] = {}
 
 _EDITOR_RATE_LIMIT = 5000  # addresses per minute per editor
@@ -81,7 +89,9 @@ async def bulk_preview(
 
 
 @router.post("/bulk/execute", response_model=BulkExecuteResponse, status_code=201)
+@limiter.limit("10/minute")
 async def bulk_execute(
+    request: Request,
     body: BulkExecuteRequest,
     current_user: Annotated[User, Depends(require_role("editor", "admin"))],
     db: Annotated[AsyncSession, Depends(get_db)],
@@ -99,11 +109,11 @@ async def bulk_execute(
             )
 
     op_data: dict = preview["operation"]
-    op = AddOfferingOperation(**op_data)
+    op_type = op_data.get("type")
 
     bulk_op = BulkOperations(
         user_id=current_user.id,
-        operation_type=op.type,
+        operation_type=op_type,
         filter_criteria={},
         affected_count=len(rc_codes),
         rollback_data=None,
@@ -111,14 +121,35 @@ async def bulk_execute(
     db.add(bulk_op)
     await db.flush()
 
-    created_codes = await _execute_add_offering(db, bulk_op.id, current_user.id, op, rc_codes)
+    # Dispatch based on operation type
+    if op_type == "add_offering":
+        op = AddOfferingOperation(**op_data)
+        modified = await _execute_add_offering(db, bulk_op.id, current_user.id, op, rc_codes)
+        bulk_op.rollback_data = {
+            "type": "add_offering",
+            "technology_id": str(op.technology_id),
+            "created_codes": modified,
+        }
+    elif op_type == "change_offering":
+        op = ChangeOfferingOperation(**op_data)
+        modified, old_values = await _execute_change_offering(db, bulk_op.id, current_user.id, op, rc_codes)
+        bulk_op.rollback_data = {
+            "type": "change_offering",
+            "technology_id": str(op.technology_id),
+            "old_values": old_values,  # [{address_code, status, max_dl, max_ul, status_since, planned_until, notes}]
+        }
+    elif op_type == "remove_offering":
+        op = RemoveOfferingOperation(**op_data)
+        modified, deleted_data = await _execute_remove_offering(db, bulk_op.id, current_user.id, op, rc_codes)
+        bulk_op.rollback_data = {
+            "type": "remove_offering",
+            "technology_id": str(op.technology_id),
+            "deleted_offerings": deleted_data,  # full data of deleted rows
+        }
+    else:
+        raise HTTPException(status_code=422, detail=f"Unknown operation type: {op_type}")
 
-    bulk_op.rollback_data = {
-        "type": op.type,
-        "technology_id": str(op.technology_id),
-        "created_codes": created_codes,
-    }
-    bulk_op.affected_count = len(created_codes)
+    bulk_op.affected_count = len(modified)
 
     await log_action(
         db,
@@ -126,11 +157,11 @@ async def bulk_execute(
         "bulk_operation",
         str(bulk_op.id),
         "execute",
-        {"type": op.type, "affected_count": len(created_codes)},
+        {"type": op_type, "affected_count": len(modified)},
     )
     await db.commit()
 
-    return BulkExecuteResponse(bulk_operation_id=bulk_op.id, modified_count=len(created_codes))
+    return BulkExecuteResponse(bulk_operation_id=bulk_op.id, modified_count=len(modified))
 
 
 @router.post("/bulk/{bulk_op_id}/rollback", status_code=204)
@@ -153,19 +184,67 @@ async def bulk_rollback(
             raise HTTPException(status_code=403, detail="Rollback window expired (15 min)")
 
     rd = bulk_op.rollback_data or {}
-    created_codes: list[int] = rd.get("created_codes", [])
-    tech_id: str | None = rd.get("technology_id")
+    rd_type = rd.get("type")
+    tech_id = rd.get("technology_id")
+    affected = 0
 
-    if created_codes and tech_id:
-        await db.execute(
-            text("""
-                DELETE FROM address_offerings
-                WHERE bulk_operation_id = CAST(:bulk_op_id AS uuid)
-                  AND address_code = ANY(:codes)
-                  AND technology_id = CAST(:tech_id AS uuid)
-            """),
-            {"bulk_op_id": str(bulk_op_id), "codes": created_codes, "tech_id": tech_id},
-        )
+    if rd_type == "add_offering":
+        created_codes: list[int] = rd.get("created_codes", [])
+        if created_codes and tech_id:
+            await db.execute(
+                text("""
+                    DELETE FROM address_offerings
+                    WHERE bulk_operation_id = CAST(:bulk_op_id AS uuid)
+                      AND address_code = ANY(:codes)
+                      AND technology_id = CAST(:tech_id AS uuid)
+                """),
+                {"bulk_op_id": str(bulk_op_id), "codes": created_codes, "tech_id": tech_id},
+            )
+            affected = len(created_codes)
+
+    elif rd_type == "change_offering":
+        # Restore old values via ORM (avoids asyncpg None CAST issues)
+        from datetime import date as _date
+        old_values: list[dict] = rd.get("old_values", [])
+        tech_uuid = uuid.UUID(tech_id) if tech_id else None
+        for old in old_values:
+            result = await db.execute(
+                select(AddressOffering).where(
+                    AddressOffering.address_code == old["address_code"],
+                    AddressOffering.technology_id == tech_uuid,
+                )
+            )
+            ao = result.scalar_one_or_none()
+            if ao is None:
+                continue
+            ao.status = old["status"]
+            ao.max_download_mbps = old["max_download_mbps"]
+            ao.max_upload_mbps = old["max_upload_mbps"]
+            ao.status_since = _date.fromisoformat(old["status_since"]) if old.get("status_since") else None
+            ao.planned_until = _date.fromisoformat(old["planned_until"]) if old.get("planned_until") else None
+            ao.notes = old.get("notes")
+            ao.updated_at = datetime.now()
+        affected = len(old_values)
+
+    elif rd_type == "remove_offering":
+        # Recreate deleted offerings via ORM
+        from datetime import date as _date
+        deleted: list[dict] = rd.get("deleted_offerings", [])
+        tech_uuid = uuid.UUID(tech_id) if tech_id else None
+        for d in deleted:
+            ao = AddressOffering(
+                address_code=d["address_code"],
+                technology_id=tech_uuid,
+                status=d["status"],
+                max_download_mbps=d["max_download_mbps"],
+                max_upload_mbps=d["max_upload_mbps"],
+                status_since=_date.fromisoformat(d["status_since"]) if d.get("status_since") else None,
+                planned_until=_date.fromisoformat(d["planned_until"]) if d.get("planned_until") else None,
+                notes=d.get("notes"),
+                created_by=uuid.UUID(d["created_by"]),
+            )
+            db.add(ao)
+        affected = len(deleted)
 
     bulk_op.rolled_back_at = datetime.now()
     await log_action(
@@ -174,7 +253,7 @@ async def bulk_rollback(
         "bulk_operation",
         str(bulk_op_id),
         "rollback",
-        {"rolled_back_count": len(created_codes)},
+        {"rolled_back_count": affected, "type": rd_type},
     )
     await db.commit()
 
@@ -233,7 +312,9 @@ async def _filter_addresses(db: AsyncSession, f: BulkFilter) -> list[int]:
 
 
 async def _build_sample(
-    db: AsyncSession, rc_codes: list[int], op: AddOfferingOperation
+    db: AsyncSession,
+    rc_codes: list[int],
+    op: AddOfferingOperation | ChangeOfferingOperation | RemoveOfferingOperation,
 ) -> list[BulkSampleItem]:
     if not rc_codes:
         return []
@@ -266,12 +347,29 @@ async def _build_sample(
         .all()
     }
 
-    new_state = {
-        "status": op.status,
-        "max_dl_mbps": op.max_dl_mbps,
-        "max_ul_mbps": op.max_ul_mbps,
-        "status_since": str(op.status_since),
-    }
+    # Build new_state preview based on operation type
+    if op.type == "add_offering":
+        new_state: dict = {
+            "status": op.status,
+            "max_dl_mbps": op.max_dl_mbps,
+            "max_ul_mbps": op.max_ul_mbps,
+            "status_since": str(op.status_since),
+        }
+    elif op.type == "change_offering":
+        new_state = {"_action": "change"}
+        if op.new_status is not None:
+            new_state["status"] = op.new_status
+        if op.new_max_dl_mbps is not None:
+            new_state["max_dl_mbps"] = op.new_max_dl_mbps
+        if op.new_max_ul_mbps is not None:
+            new_state["max_ul_mbps"] = op.new_max_ul_mbps
+        if op.new_status_since is not None:
+            new_state["status_since"] = str(op.new_status_since)
+        if op.new_planned_until is not None:
+            new_state["planned_until"] = str(op.new_planned_until)
+    else:  # remove_offering
+        new_state = {"_action": "delete"}
+
     return [
         BulkSampleItem(
             address=addr_rows.get(rc, str(rc)),
@@ -289,6 +387,17 @@ async def _execute_add_offering(
     op: AddOfferingOperation,
     rc_codes: list[int],
 ) -> list[int]:
+    # Filter out addresses soft-deleted between preview and execute
+    live_result = await db.execute(
+        select(Address.rc_code).where(
+            Address.rc_code.in_(rc_codes),
+            Address.deleted_at.is_(None),
+        )
+    )
+    live_rc_codes = [row[0] for row in live_result.fetchall()]
+    if not live_rc_codes:
+        return []
+
     now = datetime.now()
     rows = [
         {
@@ -305,7 +414,7 @@ async def _execute_add_offering(
             "created_at": now,
             "updated_at": now,
         }
-        for rc in rc_codes
+        for rc in live_rc_codes
     ]
 
     stmt = (
@@ -337,6 +446,127 @@ async def _execute_add_offering(
         )
 
     return created
+
+
+async def _execute_change_offering(
+    db: AsyncSession,
+    bulk_op_id: uuid.UUID,
+    user_id: uuid.UUID,
+    op: ChangeOfferingOperation,
+    rc_codes: list[int],
+) -> tuple[list[int], list[dict]]:
+    """Update existing address_offerings for the given technology. Returns (modified_rc_codes, old_values)."""
+    # Fetch existing offerings to capture old values for rollback
+    existing = (await db.execute(
+        text("""
+            SELECT address_code, status, max_download_mbps, max_upload_mbps,
+                   status_since, planned_until, notes
+            FROM address_offerings
+            WHERE address_code = ANY(:codes)
+              AND technology_id = CAST(:tech_id AS uuid)
+        """),
+        {"codes": rc_codes, "tech_id": str(op.technology_id)},
+    )).mappings().all()
+
+    if not existing:
+        return [], []
+
+    old_values = [
+        {
+            "address_code": r["address_code"],
+            "status": r["status"],
+            "max_download_mbps": r["max_download_mbps"],
+            "max_upload_mbps": r["max_upload_mbps"],
+            "status_since": r["status_since"].isoformat() if r["status_since"] else None,
+            "planned_until": r["planned_until"].isoformat() if r["planned_until"] else None,
+            "notes": r["notes"],
+        }
+        for r in existing
+    ]
+    modified_codes = [int(r["address_code"]) for r in existing]
+
+    # Build dynamic UPDATE — only set fields that are not None
+    set_parts = []
+    params: dict = {"codes": modified_codes, "tech_id": str(op.technology_id)}
+    if op.new_status is not None:
+        set_parts.append("status = :status")
+        params["status"] = op.new_status
+    if op.new_max_dl_mbps is not None:
+        set_parts.append("max_download_mbps = :max_dl")
+        params["max_dl"] = op.new_max_dl_mbps
+    if op.new_max_ul_mbps is not None:
+        set_parts.append("max_upload_mbps = :max_ul")
+        params["max_ul"] = op.new_max_ul_mbps
+    if op.new_status_since is not None:
+        set_parts.append("status_since = :ssince")
+        params["ssince"] = op.new_status_since
+    if op.new_planned_until is not None:
+        set_parts.append("planned_until = :punt")
+        params["punt"] = op.new_planned_until
+    if op.new_notes is not None:
+        set_parts.append("notes = :notes")
+        params["notes"] = op.new_notes
+
+    if set_parts:
+        set_parts.append("updated_at = NOW()")
+        sql = text(f"""
+            UPDATE address_offerings
+            SET {", ".join(set_parts)}
+            WHERE address_code = ANY(:codes)
+              AND technology_id = CAST(:tech_id AS uuid)
+        """)
+        await db.execute(sql, params)
+
+    return modified_codes, old_values
+
+
+async def _execute_remove_offering(
+    db: AsyncSession,
+    bulk_op_id: uuid.UUID,
+    user_id: uuid.UUID,
+    op: RemoveOfferingOperation,
+    rc_codes: list[int],
+) -> tuple[list[int], list[dict]]:
+    """Delete existing address_offerings. Returns (deleted_rc_codes, full_data_for_rollback)."""
+    existing = (await db.execute(
+        text("""
+            SELECT address_code, status, max_download_mbps, max_upload_mbps,
+                   status_since, planned_until, notes, created_by
+            FROM address_offerings
+            WHERE address_code = ANY(:codes)
+              AND technology_id = CAST(:tech_id AS uuid)
+        """),
+        {"codes": rc_codes, "tech_id": str(op.technology_id)},
+    )).mappings().all()
+
+    if not existing:
+        return [], []
+
+    deleted_data = [
+        {
+            "address_code": r["address_code"],
+            "status": r["status"],
+            "max_download_mbps": r["max_download_mbps"],
+            "max_upload_mbps": r["max_upload_mbps"],
+            "status_since": r["status_since"].isoformat() if r["status_since"] else None,
+            "planned_until": r["planned_until"].isoformat() if r["planned_until"] else None,
+            "notes": r["notes"],
+            "created_by": str(r["created_by"]),
+        }
+        for r in existing
+    ]
+    deleted_codes = [int(r["address_code"]) for r in existing]
+
+    await db.execute(
+        text("""
+            DELETE FROM address_offerings
+            WHERE address_code = ANY(:codes)
+              AND technology_id = CAST(:tech_id AS uuid)
+        """),
+        {"codes": deleted_codes, "tech_id": str(op.technology_id)},
+    )
+
+    return deleted_codes, deleted_data
 
 
 async def _recent_modified_count(db: AsyncSession, user_id: uuid.UUID) -> int:

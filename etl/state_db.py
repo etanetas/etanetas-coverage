@@ -27,7 +27,7 @@ IMPORT_STEPS = [
     "streets",
     "points",
     "addresses",
-    "premises",
+    # "premises" — skipped: ISP operates at building level, not per-apartment
     "boundaries",
     "axes",
     "cid",

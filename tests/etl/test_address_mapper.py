@@ -143,7 +143,13 @@ class TestMapAddressCsv:
 class TestMapPremisesCsv:
     def _stat_lookup(self):
         return {
-            123: {"locality_code": 456, "street_code": 789, "postal_code": "LT-01234"},
+            123: {
+                "locality_code": 456,
+                "street_code": 789,
+                "postal_code": "LT-01234",
+                "house_no": "12",
+                "corpus_no": None,
+            },
         }
 
     def test_basic(self):
@@ -157,7 +163,8 @@ class TestMapPremisesCsv:
         result = map_premises_csv(row, self._stat_lookup(), {123: "SRID=4326;POINT(25.0 54.0)"})
         assert result is not None
         assert result["rc_code"] == 999
-        assert result["house_no"] == "5"
+        assert result["house_no"] == "12"   # inherited from parent building
+        assert result["flat_no"] == "5"     # PATALPOS_NR
         assert result["locality_code"] == 456
         assert result["street_code"] == 789
         assert result["postal_code"] == "LT-01234"

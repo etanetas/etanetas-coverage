@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.audit import log_action
 from app.auth import require_role
 from app.dependencies import get_db
+from app.models.address import Address
 from app.models.admin import User
 from app.models.service import AddressOffering
 from app.schemas.admin import (
@@ -132,6 +133,11 @@ async def list_address_offerings(
     current_user: Annotated[User, Depends(require_role("viewer", "editor", "admin"))],
     db: Annotated[AsyncSession, Depends(get_db)],
 ) -> list[AddressOffering]:
+    addr = await db.execute(
+        select(Address.rc_code).where(Address.rc_code == rc_code, Address.deleted_at.is_(None))
+    )
+    if addr.scalar_one_or_none() is None:
+        raise HTTPException(status_code=404, detail="Address not found")
     result = await db.execute(
         select(AddressOffering)
         .where(AddressOffering.address_code == rc_code)

@@ -131,3 +131,36 @@ Nightly sync uses **Spinta `:changes`** endpoint (small delta, fast).
 - `full_import.py` saves progress after each step to `etl_state` table (key `full_import_step`)
 - Re-running after failure resumes from last completed step automatically
 - Force full restart: `run(force=True)` or delete `full_import_step` row from `etl_state`
+
+## Production deployment
+
+**Workers:** always run with `--workers 1`. The bulk preview token store (`_preview_store` in `app/api/v1/admin/bulk.py`) is in-memory per-process — multiple workers will cause preview tokens to be invisible to other workers, breaking bulk execute.
+
+```bash
+uv run uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 1
+```
+
+**Required env variables for production:**
+
+- `DATABASE_URL` — asyncpg postgres DSN
+- `SPINTA_BASE_URL` — needed for nightly ETL sync
+- `OTEL_EXPORTER=none` (or `otlp`) — `console` floods logs with traces
+- `LOG_FILE=/var/log/etanetas/api.log` — rotating file log (50 MB × 5)
+
+**First deploy checklist:**
+
+1. `cp .env.example .env` and fill in `DATABASE_URL`, `DB_PASSWORD`, `SPINTA_BASE_URL`
+2. `docker compose up -d db`
+3. `uv run alembic upgrade head`
+4. `uv run python -m app.cli create-admin --username X --email Y` → save the key
+5. `uv run python -m etl.tasks.full_import` (~10–15 min, 2.3M addresses)
+6. Start API with `--workers 1`
+7. Set up cron (see Cron section above)
+
+**Key rotation:**
+
+```bash
+uv run python -m app.cli list-users          # see who exists
+uv run python -m app.cli revoke-key --username X
+uv run python -m app.cli create-key --username X --name "main"
+```

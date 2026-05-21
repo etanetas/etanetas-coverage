@@ -27,7 +27,7 @@ async def _update_last_used(key_id: uuid.UUID) -> None:
             )
             await session.commit()
     except Exception:
-        log.warning("Failed to update last_used_at for key %s", key_id)
+        log.exception("Failed to update last_used_at for key %s", key_id)
 
 
 def require_role(*roles: str):
@@ -57,7 +57,12 @@ async def get_current_user(
 
     for api_key, user in rows:
         if bcrypt.checkpw(raw_key.encode(), api_key.key_hash.encode()):
-            asyncio.create_task(_update_last_used(api_key.id))
+            # Throttle: only spawn an update task if last_used_at is >60s ago (or NULL)
+            if (
+                api_key.last_used_at is None
+                or (datetime.now() - api_key.last_used_at).total_seconds() > 60
+            ):
+                asyncio.create_task(_update_last_used(api_key.id))
             return user
 
     raise HTTPException(status_code=401, detail="Invalid or missing API key")

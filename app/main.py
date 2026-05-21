@@ -1,4 +1,8 @@
+import logging
+
 from fastapi import FastAPI
+
+log = logging.getLogger(__name__)
 from fastapi.middleware.cors import CORSMiddleware
 from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
@@ -7,6 +11,9 @@ from sqlalchemy import text
 from app.api.v1.admin.addresses import router as admin_addresses_router
 from app.api.v1.admin.audit import router as admin_audit_router
 from app.api.v1.admin.bulk import router as admin_bulk_router
+from app.api.v1.admin.hierarchy import router as admin_hierarchy_router
+from app.api.v1.admin.map import router as admin_map_router
+from app.api.v1.admin.stats import router as admin_stats_router
 from app.api.v1.admin.technologies import router as admin_technologies_router
 from app.api.v1.admin.users import router as admin_users_router
 from app.api.v1.admin.zones import router as admin_zones_router
@@ -44,6 +51,9 @@ app.include_router(admin_technologies_router)
 app.include_router(admin_zones_router)
 app.include_router(admin_audit_router)
 app.include_router(admin_bulk_router)
+app.include_router(admin_map_router)
+app.include_router(admin_hierarchy_router)
+app.include_router(admin_stats_router)
 
 
 @app.get("/health")
@@ -52,5 +62,6 @@ async def health():
         async with AsyncSessionLocal() as session:
             await session.execute(text("SELECT 1"))
         return {"status": "ok", "db": "ok"}
-    except Exception as e:
-        return {"status": "degraded", "db": str(e)}, 503
+    except Exception:
+        log.exception("Health check DB error")
+        return {"status": "degraded", "db": "unhealthy"}, 503

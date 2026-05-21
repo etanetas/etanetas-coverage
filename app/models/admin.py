@@ -18,6 +18,7 @@ class User(Base):
     email: Mapped[str] = mapped_column(Text, unique=True)
     role: Mapped[str] = mapped_column(Text)
     active: Mapped[bool] = mapped_column(Boolean)
+    lms_username: Mapped[str | None] = mapped_column(Text, unique=True)
     created_at: Mapped[datetime] = mapped_column(TIMESTAMP, default=datetime.now)
 
 
@@ -58,6 +59,7 @@ class AuditLog(Base):
     __table_args__ = (
         Index("idx_audit_log_entity", "entity_type", "entity_id"),
         Index("idx_audit_log_user", "user_id"),
+        Index("idx_audit_log_entity_time", "entity_type", "entity_id", "at"),
     )
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)

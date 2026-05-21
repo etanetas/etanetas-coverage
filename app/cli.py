@@ -4,6 +4,8 @@ import secrets
 import sys
 from datetime import datetime
 
+from app.config import settings
+
 import typer
 from rich import print as rprint
 from sqlalchemy import select
@@ -151,7 +153,7 @@ async def _require_user(session, username: str) -> User:
 
 def _new_api_key(user_id, name: str) -> tuple[str, ApiKey]:
     raw_key = "etn_pk_" + secrets.token_urlsafe(32)
-    key_hash = bcrypt.hashpw(raw_key.encode(), bcrypt.gensalt()).decode()
+    key_hash = bcrypt.hashpw(raw_key.encode(), bcrypt.gensalt(rounds=settings.bcrypt_rounds)).decode()
     return raw_key, ApiKey(user_id=user_id, key_hash=key_hash, name=name)
 
 
