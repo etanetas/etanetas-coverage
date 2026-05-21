@@ -1,0 +1,323 @@
+import json
+import uuid
+from datetime import datetime
+from typing import Annotated
+
+from fastapi import APIRouter, Depends, HTTPException, Query
+from pydantic import BaseModel
+from sqlalchemy import select, text
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.audit import log_action
+from app.auth import require_role
+from app.dependencies import get_db
+from app.models.admin import User
+from app.models.service import ServiceZone, ZoneOffering
+from app.schemas.admin import ZoneCreate, ZoneDetail, ZoneOfferingCreate, ZoneOfferingOut, ZoneOfferingUpdate, ZoneOut, ZoneUpdate
+
+router = APIRouter(prefix="/api/v1/admin/zones", tags=["admin-zones"])
+
+
+@router.get("", response_model=list[ZoneOut])
+async def list_zones(
+    current_user: Annotated[User, Depends(require_role("viewer", "editor", "admin"))],
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> list[ZoneOut]:
+    # Fetch zones with aggressively simplified polygon for map rendering
+    rows = (await db.execute(text("""
+        SELECT
+            id, name, description, priority, created_at,
+            polygon IS NOT NULL AS has_polygon,
+            CASE WHEN polygon IS NOT NULL
+                 THEN ST_AsGeoJSON(ST_SimplifyPreserveTopology(polygon::geometry, 0.001))::jsonb
+                 ELSE NULL
+            END AS polygon_geojson
+        FROM service_zones
+        ORDER BY priority DESC, name
+    """))).mappings().all()
+    return [ZoneOut(
+        id=r["id"],
+        name=r["name"],
+        description=r["description"],
+        priority=r["priority"],
+        has_polygon=r["has_polygon"],
+        polygon_geojson=r["polygon_geojson"],
+        created_at=r["created_at"],
+    ) for r in rows]
+
+
+@router.get("/{zone_id}/detail", response_model=ZoneDetail)
+async def get_zone_detail(
+    zone_id: uuid.UUID,
+    current_user: Annotated[User, Depends(require_role("viewer", "editor", "admin"))],
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> ZoneDetail:
+    """Full zone detail with polygon GeoJSON, offerings, and address count."""
+    zone = await _require_zone(db, zone_id)
+
+    polygon_row = (await db.execute(text("""
+        SELECT
+            CASE WHEN polygon IS NOT NULL
+                 THEN ST_AsGeoJSON(ST_SimplifyPreserveTopology(polygon::geometry, 0.0001))::jsonb
+                 ELSE NULL
+            END AS polygon_geojson
+        FROM service_zones WHERE id = CAST(:id AS uuid)
+    """), {"id": str(zone_id)})).mappings().first()
+
+    count_row = (await db.execute(text("""
+        SELECT COUNT(*) AS cnt
+        FROM addresses a
+        JOIN service_zones z ON ST_Contains(z.polygon::geometry, a.point::geometry)
+        WHERE z.id = CAST(:id AS uuid) AND a.deleted_at IS NULL
+    """), {"id": str(zone_id)})).first()
+
+    offerings_result = await db.execute(
+        select(ZoneOffering).where(ZoneOffering.zone_id == zone_id).order_by(ZoneOffering.created_at)
+    )
+    offerings = list(offerings_result.scalars().all())
+
+    return ZoneDetail(
+        id=zone.id,
+        name=zone.name,
+        description=zone.description,
+        priority=zone.priority,
+        has_polygon=zone.polygon is not None,
+        polygon_geojson=polygon_row["polygon_geojson"] if polygon_row else None,
+        created_at=zone.created_at,
+        offerings=offerings,
+        address_count=int(count_row[0]) if count_row and zone.polygon is not None else 0,
+    )
+
+
+@router.post("", response_model=ZoneOut, status_code=201)
+async def create_zone(
+    body: ZoneCreate,
+    current_user: Annotated[User, Depends(require_role("editor", "admin"))],
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> ZoneOut:
+    zone = ServiceZone(
+        name=body.name,
+        description=body.description,
+        priority=body.priority,
+        created_by=current_user.id,
+    )
+    db.add(zone)
+    await db.flush()
+
+    if body.polygon_geojson is not None:
+        await db.execute(
+            text("UPDATE service_zones SET polygon = ST_SetSRID(ST_GeomFromGeoJSON(:geojson), 4326) WHERE id = :id"),
+            {"geojson": json.dumps(body.polygon_geojson), "id": str(zone.id)},
+        )
+
+    await log_action(db, current_user.id, "service_zone", str(zone.id), "create",
+                     {"name": body.name, "priority": body.priority})
+    await db.commit()
+    await db.refresh(zone)
+    return ZoneOut(
+        id=zone.id,
+        name=zone.name,
+        description=zone.description,
+        priority=zone.priority,
+        has_polygon=zone.polygon is not None,
+        polygon_geojson=body.polygon_geojson,
+        created_at=zone.created_at,
+    )
+
+
+@router.put("/{zone_id}", response_model=ZoneOut)
+async def update_zone(
+    zone_id: uuid.UUID,
+    body: ZoneUpdate,
+    current_user: Annotated[User, Depends(require_role("editor", "admin"))],
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> ZoneOut:
+    zone = await _require_zone(db, zone_id)
+
+    if body.name is not None:
+        zone.name = body.name
+    if body.description is not None:
+        zone.description = body.description
+    if body.priority is not None:
+        zone.priority = body.priority
+
+    if body.polygon_geojson is not None:
+        await db.flush()
+        await db.execute(
+            text("UPDATE service_zones SET polygon = ST_SetSRID(ST_GeomFromGeoJSON(:geojson), 4326) WHERE id = :id"),
+            {"geojson": json.dumps(body.polygon_geojson), "id": str(zone_id)},
+        )
+
+    changes = body.model_dump(exclude_none=True, exclude={"polygon_geojson"})
+    await log_action(db, current_user.id, "service_zone", str(zone_id), "update", changes or None)
+    await db.commit()
+    await db.refresh(zone)
+    return ZoneOut(
+        id=zone.id,
+        name=zone.name,
+        description=zone.description,
+        priority=zone.priority,
+        has_polygon=zone.polygon is not None,
+        polygon_geojson=body.polygon_geojson,
+        created_at=zone.created_at,
+    )
+
+
+@router.delete("/{zone_id}", status_code=204)
+async def delete_zone(
+    zone_id: uuid.UUID,
+    current_user: Annotated[User, Depends(require_role("admin"))],
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> None:
+    zone = await _require_zone(db, zone_id)
+    await log_action(db, current_user.id, "service_zone", str(zone_id), "delete", {"name": zone.name})
+    await db.delete(zone)
+    await db.commit()
+
+
+@router.get("/{zone_id}/offerings", response_model=list[ZoneOfferingOut])
+async def list_zone_offerings(
+    zone_id: uuid.UUID,
+    current_user: Annotated[User, Depends(require_role("viewer", "editor", "admin"))],
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> list[ZoneOffering]:
+    await _require_zone(db, zone_id)
+    result = await db.execute(
+        select(ZoneOffering)
+        .where(ZoneOffering.zone_id == zone_id)
+        .order_by(ZoneOffering.created_at)
+    )
+    return list(result.scalars().all())
+
+
+@router.post("/{zone_id}/offerings", response_model=ZoneOfferingOut, status_code=201)
+async def create_zone_offering(
+    zone_id: uuid.UUID,
+    body: ZoneOfferingCreate,
+    current_user: Annotated[User, Depends(require_role("editor", "admin"))],
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> ZoneOffering:
+    await _require_zone(db, zone_id)
+
+    existing = await db.execute(
+        select(ZoneOffering).where(
+            ZoneOffering.zone_id == zone_id,
+            ZoneOffering.technology_id == body.technology_id,
+        )
+    )
+    if existing.scalar_one_or_none() is not None:
+        raise HTTPException(status_code=409, detail="Offering for this technology already exists in zone")
+
+    offering = ZoneOffering(zone_id=zone_id, **body.model_dump())
+    db.add(offering)
+    await db.flush()
+    await log_action(db, current_user.id, "zone_offering", str(offering.id), "create",
+                     {"zone_id": str(zone_id), **body.model_dump()})
+    await db.commit()
+    await db.refresh(offering)
+    return offering
+
+
+@router.put("/offerings/{offering_id}", response_model=ZoneOfferingOut)
+async def update_zone_offering(
+    offering_id: uuid.UUID,
+    body: ZoneOfferingUpdate,
+    current_user: Annotated[User, Depends(require_role("editor", "admin"))],
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> ZoneOffering:
+    offering = await _require_offering(db, offering_id)
+
+    changes = body.model_dump(exclude_none=True)
+    for field, value in changes.items():
+        setattr(offering, field, value)
+    offering.updated_at = datetime.now()
+
+    await log_action(db, current_user.id, "zone_offering", str(offering_id), "update", changes)
+    await db.commit()
+    await db.refresh(offering)
+    return offering
+
+
+@router.delete("/offerings/{offering_id}", status_code=204)
+async def delete_zone_offering(
+    offering_id: uuid.UUID,
+    current_user: Annotated[User, Depends(require_role("editor", "admin"))],
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> None:
+    offering = await _require_offering(db, offering_id)
+    zone_id = offering.zone_id
+    await db.delete(offering)
+    await log_action(db, current_user.id, "zone_offering", str(offering_id), "delete",
+                     {"zone_id": str(zone_id)})
+    await db.commit()
+
+
+class ZoneAddressItem(BaseModel):
+    rc_code: int
+    full_address: str
+    postal_code: str | None
+    has_override: bool  # True if this address has its own address_offering
+
+
+class ZoneAddressesResponse(BaseModel):
+    total: int
+    items: list[ZoneAddressItem]
+
+
+@router.get("/{zone_id}/addresses", response_model=ZoneAddressesResponse)
+async def list_zone_addresses(
+    zone_id: uuid.UUID,
+    current_user: Annotated[User, Depends(require_role("viewer", "editor", "admin"))],
+    db: Annotated[AsyncSession, Depends(get_db)],
+    limit: int = Query(50, ge=1, le=500),
+    offset: int = Query(0, ge=0),
+) -> ZoneAddressesResponse:
+    """List addresses (buildings) inside a zone's polygon. Paginated."""
+    await _require_zone(db, zone_id)
+
+    total_row = await db.execute(text("""
+        SELECT COUNT(*) FROM addresses a
+        JOIN service_zones z ON ST_Contains(z.polygon::geometry, a.point::geometry)
+        WHERE z.id = CAST(:zid AS uuid)
+          AND a.deleted_at IS NULL
+          AND a.address_type = 'building'
+    """), {"zid": str(zone_id)})
+    total = int(total_row.scalar() or 0)
+
+    rows = (await db.execute(text("""
+        SELECT
+            a.rc_code,
+            (COALESCE(s.name || ' ', '') || a.house_no || ', ' || l.name) AS full_address,
+            a.postal_code,
+            EXISTS(SELECT 1 FROM address_offerings ao WHERE ao.address_code = a.rc_code) AS has_override
+        FROM addresses a
+        JOIN service_zones z ON ST_Contains(z.polygon::geometry, a.point::geometry)
+        JOIN localities l ON l.rc_code = a.locality_code
+        LEFT JOIN streets s ON s.rc_code = a.street_code
+        WHERE z.id = CAST(:zid AS uuid)
+          AND a.deleted_at IS NULL
+          AND a.address_type = 'building'
+        ORDER BY a.rc_code
+        LIMIT :limit OFFSET :offset
+    """), {"zid": str(zone_id), "limit": limit, "offset": offset})).mappings().all()
+
+    return ZoneAddressesResponse(
+        total=total,
+        items=[ZoneAddressItem(**r) for r in rows],
+    )
+
+
+async def _require_zone(db: AsyncSession, zone_id: uuid.UUID) -> ServiceZone:
+    result = await db.execute(select(ServiceZone).where(ServiceZone.id == zone_id))
+    zone = result.scalar_one_or_none()
+    if zone is None:
+        raise HTTPException(status_code=404, detail="Zone not found")
+    return zone
+
+
+async def _require_offering(db: AsyncSession, offering_id: uuid.UUID) -> ZoneOffering:
+    result = await db.execute(select(ZoneOffering).where(ZoneOffering.id == offering_id))
+    offering = result.scalar_one_or_none()
+    if offering is None:
+        raise HTTPException(status_code=404, detail="Zone offering not found")
+    return offering

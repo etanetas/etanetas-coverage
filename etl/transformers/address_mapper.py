@@ -58,7 +58,9 @@ def map_locality(r: dict[str, Any], muni_lookup: dict[str, int]) -> dict[str, An
             "rc_code": r["gyv_kodas"],
             "muni_code": muni_lookup[r["savivaldybe"]["_id"]],
             "name": r["pavadinimas"],
+            "name_k": r.get("pavadinimas_k"),
             "type": r["tipas"],
+            "type_abbr": r.get("tipo_santrumpa") or None,
             "synced_at": utcnow_naive(),
         }
     except KeyError as exc:
@@ -69,11 +71,14 @@ def map_locality(r: dict[str, Any], muni_lookup: dict[str, int]) -> dict[str, An
 def map_street(r: dict[str, Any], locality_lookup: dict[str, int]) -> dict[str, Any] | None:
     """Map Spinta ``gatve/Gatve`` record → Street row."""
     try:
+        name = r["pavadinimas"]
+        type_abbr = r.get("tipo_santrumpa") or None
         return {
             "rc_code": r["gat_kodas"],
             "locality_code": locality_lookup[r["gyvenamoji_vietove"]["_id"]],
-            "name": r["pavadinimas"],
-            "full_name": r["pavadinimas"],
+            "name": name,
+            "type_abbr": type_abbr,
+            "full_name": f"{name} {type_abbr}" if type_abbr else name,
             "synced_at": utcnow_naive(),
         }
     except KeyError as exc:
@@ -97,6 +102,7 @@ def map_address(
             "locality_code": locality_lookup[r["gyvenamoji_vietove"]["_id"]],
             "house_no": r["nr"],
             "postal_code": r.get("pasto_kodas"),
+            "address_type": "building",
             "point": point_lookup.get(rc_code),
             "synced_at": utcnow_naive(),
             "deleted_at": None,
@@ -153,8 +159,10 @@ def map_locality_csv(row: dict[str, str]) -> dict[str, Any] | None:
         return {
             "rc_code": int(row["GYV_KODAS"]),
             "muni_code": int(row["SAV_KODAS"]),
-            "name": row["VARDAS_K"],
+            "name": row["VARDAS"],
+            "name_k": row["VARDAS_K"],
             "type": row["TIPAS"],
+            "type_abbr": row.get("TIPO_SANTRUMPA") or None,
             "synced_at": utcnow_naive(),
         }
     except (KeyError, ValueError) as exc:
@@ -166,14 +174,29 @@ def map_locality_csv(row: dict[str, str]) -> dict[str, Any] | None:
         return None
 
 
-def map_street_csv(row: dict[str, str]) -> dict[str, Any] | None:
+def map_street_csv(
+    row: dict[str, str], locality_name_lookup: dict[int, str] | None = None
+) -> dict[str, Any] | None:
     """Map RC ``adr_gatves.csv`` row → Street row."""
     try:
+        rc_code = int(row["GAT_KODAS"])
+        locality_code = int(row["GYV_KODAS"])
+        name = row["VARDAS_K"]
+        type_abbr = row.get("TIPO_SANTRUMPA") or None
+        if type_abbr and locality_name_lookup:
+            loc_name = locality_name_lookup.get(locality_code, "")
+            full_name = f"{name} {type_abbr}, {loc_name}" if loc_name else f"{name} {type_abbr}"
+        elif locality_name_lookup:
+            loc_name = locality_name_lookup.get(locality_code, "")
+            full_name = f"{name}, {loc_name}" if loc_name else name
+        else:
+            full_name = f"{name} {type_abbr}" if type_abbr else name
         return {
-            "rc_code": int(row["GAT_KODAS"]),
-            "locality_code": int(row["GYV_KODAS"]),
-            "name": row["VARDAS_K"],
-            "full_name": row["VARDAS_K"],
+            "rc_code": rc_code,
+            "locality_code": locality_code,
+            "name": name,
+            "type_abbr": type_abbr,
+            "full_name": full_name,
             "synced_at": utcnow_naive(),
         }
     except (KeyError, ValueError) as exc:
@@ -195,7 +218,10 @@ def map_address_csv(row: dict[str, str], point_lookup: dict[int, str]) -> dict[s
             "street_code": int(gat) if gat else None,
             "locality_code": int(row["GYV_KODAS"]),
             "house_no": row["NR"],
+            "corpus_no": row.get("KORPUSO_NR") or None,
+            "flat_no": None,
             "postal_code": row.get("PASTO_KODAS") or None,
+            "address_type": "building",
             "point": point_lookup.get(rc_code),
             "synced_at": utcnow_naive(),
             "deleted_at": None,
@@ -209,7 +235,7 @@ def map_address_csv(row: dict[str, str], point_lookup: dict[int, str]) -> dict[s
         return None
 
 
-# stat_lookup value type: {locality_code, street_code, postal_code}
+# stat_lookup value type: {locality_code, street_code, postal_code, house_no, corpus_no}
 StatInfo = dict[str, Any]
 
 
@@ -233,8 +259,11 @@ def map_premises_csv(
             "rc_code": rc_code,
             "street_code": parent["street_code"],
             "locality_code": parent["locality_code"],
-            "house_no": row["PATALPOS_NR"],
+            "house_no": parent["house_no"],
+            "corpus_no": parent.get("corpus_no"),
+            "flat_no": row["PATALPOS_NR"],
             "postal_code": parent["postal_code"],
+            "address_type": "premises",
             "point": point_lookup.get(parent_aob),
             "synced_at": utcnow_naive(),
             "deleted_at": None,

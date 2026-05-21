@@ -2,6 +2,17 @@
 
 ISP address & service availability API for Etanetas (Šalčininkai, LT). Answers the question: "What internet services are available at address X?"
 
+## Implementation status
+
+| Stage | Description | Status |
+|---|---|---|
+| 1 | Foundation — DB schema, PostGIS, models, migrations | ✅ Done |
+| 2 | RC import ETL — full import, nightly sync, monthly resync | ✅ Done |
+| 3 | Public API — `/public/addresses/search` + `/availability` | ✅ Done |
+| 4 | Internal API — auth, admin CRUD, bulk ops, audit log | ✅ Done |
+| 5 | LMS Plus PHP plugin | 🔜 Next |
+| 6 | etanetas.lt frontend integration | 🔜 Planned |
+
 ## Requirements
 
 - [Docker](https://docs.docker.com/get-docker/) with Compose
@@ -112,6 +123,9 @@ uv run python -m app.cli --help
 | Command | Description |
 |---|---|
 | `create-admin --username X --email Y` | Creates an admin user and generates an initial API key |
+| `create-key --username X --name label` | Generates a new API key for an existing user |
+| `revoke-key --username X` | Revokes all active API keys for a user |
+| `list-users` | Lists all users and their active key count |
 | `version` | Prints the package version |
 
 ### create-admin
@@ -212,6 +226,36 @@ Nightly sync has 3 scheduled attempts (+4h, +8h) for resilience. Each run checks
 | `adresai_cid` | integer | Last processed Spinta `_cid` — used by nightly sync |
 | `full_import_step` | step name | Checkpoint for resume after interrupted import |
 
+## Production deployment
+
+**IMPORTANT: run with `--workers 1`** — the bulk preview token store is in-memory per-process. Multiple workers will break bulk operations.
+
+```bash
+# 1. Apply migrations
+uv run alembic upgrade head
+
+# 2. Create first admin
+uv run python -m app.cli create-admin --username admin --email admin@etanetas.lt
+# → save the printed API key (shown ONCE)
+
+# 3. Run initial ETL import (~10-15 min, 2.3M addresses)
+uv run python -m etl.tasks.full_import
+
+# 4. Start API (single worker, log to file)
+LOG_FILE=/var/log/etanetas/api.log \
+OTEL_EXPORTER=none \
+uv run uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 1
+
+# 5. Set up cron (see Cron setup section above)
+```
+
+**Required env for production:**
+
+- `DATABASE_URL` — postgres connection
+- `SPINTA_BASE_URL` — for ETL nightly sync
+- `OTEL_EXPORTER=none` (or `otlp` with endpoint) — disables noisy console traces
+- `LOG_FILE` — writes rotating logs instead of stdout-only
+
 ## Development
 
 ```bash
@@ -221,6 +265,12 @@ uv sync
 # Run API locally (with hot reload)
 docker compose up -d db
 uv run uvicorn app.main:app --reload
+
+# Run tests
+uv run pytest
+
+# Lint
+uv run ruff check --fix .
 
 # Run CLI
 uv run python -m app.cli --help

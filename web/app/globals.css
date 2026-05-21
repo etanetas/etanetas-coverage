@@ -1,0 +1,44 @@
+@import "tailwindcss";
+
+:root {
+  color-scheme: light;
+  --background: #ffffff;
+  --foreground: #171717;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-geist-sans), Arial, Helvetica, sans-serif;
+}
+
+.map-screen .leaflet-bottom.leaflet-right {
+  right: 12px;
+}
+
+.map-screen.map-has-inspector .leaflet-bottom.leaflet-right {
+  right: 360px;
+}
+
+/* No focus ring / selection box on map paths */
+.leaflet-interactive:focus,
+.leaflet-interactive:focus-visible {
+  outline: none;
+}
+
+@media (max-width: 1200px) {
+  .map-screen .leaflet-bottom.leaflet-right {
+    right: 12px;
+  }
+
+  .map-screen.map-has-inspector .leaflet-bottom.leaflet-right {
+    right: 12px;
+  }
+}

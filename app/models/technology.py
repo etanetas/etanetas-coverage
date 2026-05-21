@@ -13,6 +13,7 @@ class TechnologyType(Base):
     public_name: Mapped[str] = mapped_column(Text)
     sort_order: Mapped[int] = mapped_column(Integer, default=100)
     active: Mapped[bool] = mapped_column(Boolean, default=True)
+    map_color: Mapped[str] = mapped_column(Text, default="#6b7280", server_default="#6b7280")
 
 
 class Technology(Base):

@@ -9,6 +9,7 @@ Triggered by cron: ``0 3 1 * *`` (1st of each month at 03:00).
 
 import asyncio
 import logging
+import socket
 from datetime import datetime
 from pathlib import Path
 
@@ -17,6 +18,7 @@ from sqlalchemy import text
 from app.database import AsyncSessionLocal
 from app.logging_config import configure_logging
 from etl.config import settings
+from etl.notifications import send_alert
 from etl.tasks.full_import import run as full_import_run
 from etl.utils.time import utcnow_naive
 
@@ -66,6 +68,18 @@ async def _mark_deleted(sync_start: datetime) -> int:
 
 async def run() -> None:
     """Run monthly full resync. Idempotent: safe to re-run."""
+    try:
+        await _run()
+    except Exception:
+        log.exception("Monthly full resync failed")
+        await send_alert(
+            f"❌ Monthly resync FAILED on {socket.gethostname()}\n"
+            f"Check logs. Re-run: uv run python -m etl.tasks.monthly_full_resync"
+        )
+        raise
+
+
+async def _run() -> None:
     log.info("=== Monthly full resync started ===")
 
     _clear_cache()
