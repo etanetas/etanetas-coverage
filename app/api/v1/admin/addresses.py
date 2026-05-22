@@ -1,5 +1,4 @@
 import uuid
-from datetime import datetime
 from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -10,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.pagination import Page, PaginationParams, pagination_params
 from app.audit import log_action
 from app.auth import require_role
+from app.db.address_labels import _ADDR_JOINS, _FULL_ADDRESS, _HOUSE, _LOCALITY_LABEL, _MUNI_SHORT, _STREET_WITH_TYPE  # noqa: F401
 from app.dependencies import get_db
 from app.models.address import Address
 from app.models.admin import User
@@ -22,8 +22,7 @@ from app.schemas.admin import (
     AddressSearchResult,
     ZoneOfferingOut,
 )
-
-from app.db.address_labels import _ADDR_JOINS, _FULL_ADDRESS, _HOUSE, _LOCALITY_LABEL, _MUNI_SHORT, _STREET_WITH_TYPE  # noqa: F401
+from app.time import now
 
 router = APIRouter(prefix="/api/v1/admin/addresses", tags=["admin-addresses"])
 
@@ -298,7 +297,7 @@ async def update_address_offering(
     changes = body.model_dump(exclude_none=True)
     for field, value in changes.items():
         setattr(offering, field, value)
-    offering.updated_at = datetime.now()
+    offering.updated_at = now()
 
     await log_action(
         db,

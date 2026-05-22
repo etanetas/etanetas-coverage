@@ -1,13 +1,14 @@
+import asyncio
 import logging
 
 from fastapi import FastAPI
-from fastapi.responses import JSONResponse
-
-log = logging.getLogger(__name__)
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 from sqlalchemy import text
+from sqlalchemy.exc import SQLAlchemyError
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from app.api.v1.admin.addresses import router as admin_addresses_router
 from app.api.v1.admin.audit import router as admin_audit_router
@@ -21,10 +22,18 @@ from app.api.v1.admin.zones import router as admin_zones_router
 from app.api.v1.public.addresses import router as public_addresses_router
 from app.config import settings
 from app.database import AsyncSessionLocal, engine
+from app.errors import (
+    http_exception_handler,
+    raise_error,
+    unhandled_exception_handler,
+    validation_exception_handler,
+)
 from app.limiter import limiter
 from app.logging_config import configure_logging
 from app.middleware import RequestIDMiddleware
 from app.telemetry import configure_telemetry
+
+log = logging.getLogger(__name__)
 
 configure_logging()
 
@@ -35,6 +44,9 @@ app = FastAPI(
 
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+app.add_exception_handler(StarletteHTTPException, http_exception_handler)
+app.add_exception_handler(RequestValidationError, validation_exception_handler)
+app.add_exception_handler(Exception, unhandled_exception_handler)
 
 app.add_middleware(RequestIDMiddleware)
 app.add_middleware(
@@ -58,12 +70,20 @@ app.include_router(admin_hierarchy_router)
 app.include_router(admin_stats_router)
 
 
-@app.get("/health")
-async def health():
+async def _db_ping() -> None:
+    """Tiny DB round-trip; isolated so tests can monkeypatch."""
+    async with AsyncSessionLocal() as session:
+        await session.execute(text("SELECT 1"))
+
+
+@app.get("/health", tags=["health"], summary="Liveness + DB readiness probe")
+async def health() -> dict:
     try:
-        async with AsyncSessionLocal() as session:
-            await session.execute(text("SELECT 1"))
-        return {"status": "ok", "db": "ok"}
-    except Exception:
-        log.exception("Health check DB error")
-        return JSONResponse(status_code=503, content={"status": "degraded", "db": "unhealthy"})
+        await _db_ping()
+    except SQLAlchemyError as exc:
+        log.warning("DB health check failed: %s", exc)
+        raise_error(503, "SERVICE_UNAVAILABLE", "Database unavailable")
+    except asyncio.TimeoutError:
+        log.warning("DB health check timed out")
+        raise_error(503, "SERVICE_UNAVAILABLE", "Database health check timed out")
+    return {"status": "ok", "db": "up"}

@@ -1,6 +1,5 @@
 import json
 import uuid
-from datetime import datetime
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -15,6 +14,7 @@ from app.dependencies import get_db
 from app.models.admin import User
 from app.models.service import ServiceZone, ZoneOffering
 from app.schemas.admin import ZoneCreate, ZoneDetail, ZoneOfferingCreate, ZoneOfferingOut, ZoneOfferingUpdate, ZoneOut, ZoneUpdate
+from app.time import now
 
 router = APIRouter(prefix="/api/v1/admin/zones", tags=["admin-zones"])
 
@@ -266,7 +266,7 @@ async def update_zone_offering(
     changes = body.model_dump(exclude_none=True)
     for field, value in changes.items():
         setattr(offering, field, value)
-    offering.updated_at = datetime.now()
+    offering.updated_at = now()
 
     await log_action(db, current_user.id, "zone_offering", str(offering_id), "update", changes)
     await db.commit()

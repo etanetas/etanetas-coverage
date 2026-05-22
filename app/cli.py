@@ -1,19 +1,17 @@
 import asyncio
-import bcrypt
 import secrets
 import sys
-from datetime import datetime
+from importlib.metadata import version as pkg_version
 
-from app.config import settings
-
+import bcrypt
 import typer
 from rich import print as rprint
 from sqlalchemy import select
 
+from app.config import settings
 from app.database import AsyncSessionLocal
 from app.models.admin import ApiKey, User
-
-from importlib.metadata import version as pkg_version
+from app.time import now
 
 app = typer.Typer()
 
@@ -116,9 +114,9 @@ async def _revoke_key(username: str) -> None:
             rprint(f"[yellow]No active keys found for '{username}'.[/yellow]")
             return
 
-        now = datetime.now()
+        current = now()
         for key in keys:
-            key.revoked_at = now
+            key.revoked_at = current
 
         await session.commit()
         rprint(f"[green]Revoked {len(keys)} key(s) for '{username}'.[/green]")

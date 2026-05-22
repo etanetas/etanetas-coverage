@@ -1,11 +1,11 @@
 import json
 import uuid
-from datetime import datetime
 from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.admin import AuditLog
+from app.time import now
 
 
 def _jsonify(obj: Any) -> Any:
@@ -28,5 +28,5 @@ async def log_action(
         entity_id=entity_id,
         action=action,
         diff=_jsonify(diff) if diff is not None else None,
-        at=datetime.now(),
+        at=now(),
     ))

@@ -1,7 +1,7 @@
 import logging
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -98,11 +98,9 @@ _AVAILABILITY_SQL = text("""
 @limiter.limit("60/minute")
 async def search_addresses(
     request: Request,
-    q: str,
+    q: Annotated[str, Query(min_length=2, max_length=100, description="Address search query")],
     db: Annotated[AsyncSession, Depends(get_db)],
 ) -> list[AddressSearchResult]:
-    if len(q) < 2:
-        return []
     rows = (await db.execute(_SEARCH_SQL, {"q": q})).mappings().all()
     return [AddressSearchResult(**row) for row in rows]
 

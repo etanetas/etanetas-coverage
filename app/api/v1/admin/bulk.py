@@ -2,7 +2,7 @@ import json
 import logging
 import secrets
 import uuid
-from datetime import date, datetime, timedelta
+from datetime import date, timedelta
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -18,6 +18,7 @@ from app.limiter import limiter
 from app.models.address import Address
 from app.models.admin import BulkOperations, BulkPreviewToken, User
 from app.models.service import AddressOffering
+from app.time import now
 
 from app.db.address_labels import _ADDR_JOINS, _FULL_ADDRESS, _HOUSE, _LOCALITY_LABEL, _MUNI_SHORT, _STREET_WITH_TYPE  # noqa: F401
 
@@ -41,7 +42,9 @@ _EDITOR_RATE_LIMIT = 5000  # addresses per minute per editor
 
 
 @router.post("/bulk/preview", response_model=BulkPreviewResponse)
+@limiter.limit("30/minute")
 async def bulk_preview(
+    request: Request,
     body: BulkPreviewRequest,
     current_user: Annotated[User, Depends(require_role("editor", "admin"))],
     db: Annotated[AsyncSession, Depends(get_db)],
@@ -65,11 +68,11 @@ async def bulk_preview(
             "filter": body.filter.model_dump(mode="json"),
             "rc_codes": rc_codes,
         },
-        expires_at=datetime.now() + timedelta(minutes=5),
+        expires_at=now() + timedelta(minutes=5),
     )
     db.add(token_row)
     await db.execute(
-        delete(BulkPreviewToken).where(BulkPreviewToken.expires_at < datetime.now())
+        delete(BulkPreviewToken).where(BulkPreviewToken.expires_at < now())
     )
     await db.commit()
 
@@ -168,7 +171,7 @@ async def bulk_rollback(
     if current_user.role == "editor":
         if bulk_op.user_id != current_user.id:
             raise HTTPException(status_code=403, detail="Can only rollback your own operations")
-        if datetime.now() - bulk_op.created_at > timedelta(minutes=15):
+        if now() - bulk_op.created_at > timedelta(minutes=15):
             raise HTTPException(status_code=403, detail="Rollback window expired (15 min)")
 
     rd = bulk_op.rollback_data or {}
@@ -210,7 +213,7 @@ async def bulk_rollback(
             ao.status_since = date.fromisoformat(old["status_since"]) if old.get("status_since") else None
             ao.planned_until = date.fromisoformat(old["planned_until"]) if old.get("planned_until") else None
             ao.notes = old.get("notes")
-            ao.updated_at = datetime.now()
+            ao.updated_at = now()
         affected = len(old_values)
 
     elif rd_type == "remove_offering":
@@ -232,7 +235,7 @@ async def bulk_rollback(
             db.add(ao)
         affected = len(deleted)
 
-    bulk_op.rolled_back_at = datetime.now()
+    bulk_op.rolled_back_at = now()
     await log_action(
         db,
         current_user.id,
@@ -387,7 +390,7 @@ async def _execute_add_offering(
     if not live_rc_codes:
         return []
 
-    now = datetime.now()
+    current = now()
     rows = [
         {
             "address_code": rc,
@@ -400,8 +403,8 @@ async def _execute_add_offering(
             "notes": op.notes,
             "created_by": user_id,
             "bulk_operation_id": bulk_op_id,
-            "created_at": now,
-            "updated_at": now,
+            "created_at": current,
+            "updated_at": current,
         }
         for rc in live_rc_codes
     ]
@@ -581,7 +584,7 @@ async def _consume_token(token: str, user_id: uuid.UUID, db: AsyncSession) -> di
         raise HTTPException(status_code=422, detail="Invalid or expired preview token")
     if token_row.user_id != user_id:
         raise HTTPException(status_code=403, detail="Preview token belongs to a different user")
-    if datetime.now() > token_row.expires_at:
+    if now() > token_row.expires_at:
         await db.delete(token_row)
         await db.flush()
         raise HTTPException(status_code=422, detail="Preview token expired (5 min limit)")

@@ -47,10 +47,15 @@ async def test_search_missing_q_returns_422(client):
 
 
 @pytest.mark.integration
-async def test_search_short_q_returns_empty(client):
+async def test_search_short_q_returns_422(client):
     resp = await client.get("/api/v1/public/addresses/search?q=a")
-    assert resp.status_code == 200
-    assert resp.json() == []
+    assert resp.status_code == 422
+
+
+@pytest.mark.integration
+async def test_search_huge_q_returns_422(client):
+    resp = await client.get("/api/v1/public/addresses/search", params={"q": "x" * 101})
+    assert resp.status_code == 422
 
 
 @pytest.mark.integration
