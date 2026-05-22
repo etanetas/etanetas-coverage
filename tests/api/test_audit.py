@@ -106,7 +106,7 @@ async def test_address_history(client, editor_user, admin_user, seed_address, se
     )
     offering_id = create_resp.json()["id"]
 
-    await client.put(
+    await client.patch(
         f"/api/v1/admin/addresses/offerings/{offering_id}",
         json={"status": "available"},
         headers={"X-API-Key": editor_raw},
@@ -135,7 +135,7 @@ async def test_audit_log_filter_by_entity_type(client, admin_user, seed_tech):
     _, admin_raw = admin_user
     _, tech = seed_tech
 
-    await client.put(
+    await client.patch(
         f"/api/v1/admin/technologies/{tech.id}",
         json={"display_name": "Updated for audit"},
         headers={"X-API-Key": admin_raw},

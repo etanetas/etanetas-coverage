@@ -223,7 +223,7 @@ async def test_update_and_delete_address_offering(client, editor_user, seed_addr
     )
     offering_id = create_resp.json()["id"]
 
-    update_resp = await client.put(
+    update_resp = await client.patch(
         f"/api/v1/admin/addresses/offerings/{offering_id}",
         json={"status": "available", "max_download_mbps": 1000},
         headers={"X-API-Key": raw},
@@ -291,7 +291,7 @@ async def test_create_technology(client, admin_user, seed_tech):
 async def test_update_technology(client, admin_user, seed_tech):
     _, raw = admin_user
     _, tech = seed_tech
-    resp = await client.put(
+    resp = await client.patch(
         f"/api/v1/admin/technologies/{tech.id}",
         json={"display_name": "Updated Name", "sort_order": 50},
         headers={"X-API-Key": raw},
@@ -360,7 +360,7 @@ async def test_create_zone(client, editor_user):
 async def test_update_zone(client, editor_user, seed_zone):
     _, raw = editor_user
     zone_id, _ = seed_zone
-    resp = await client.put(
+    resp = await client.patch(
         f"/api/v1/admin/zones/{zone_id}",
         json={"name": "Renamed Zone", "priority": 99},
         headers={"X-API-Key": raw},
@@ -473,7 +473,7 @@ async def test_update_zone_offering(client, editor_user, seed_zone, seed_tech):
     assert create_resp.status_code == 201
     offering_id = create_resp.json()["id"]
 
-    update_resp = await client.put(
+    update_resp = await client.patch(
         f"/api/v1/admin/zones/offerings/{offering_id}",
         json={"status": "available", "max_download_mbps": 500},
         headers={"X-API-Key": raw},
