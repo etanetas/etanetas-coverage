@@ -70,7 +70,6 @@ async def seed_tech(db_session) -> tuple[TechnologyType, Technology]:
         display_name="Test Type",
         public_name="TestNet",
         sort_order=999,
-        active=True,
     )
     db_session.add(tt)
     await db_session.flush()
@@ -80,7 +79,6 @@ async def seed_tech(db_session) -> tuple[TechnologyType, Technology]:
         variant_code=f"TEST_V_{secrets.token_hex(3).upper()}",
         display_name="Test Variant",
         sort_order=999,
-        active=True,
     )
     db_session.add(tech)
     await db_session.flush()
@@ -303,7 +301,7 @@ async def test_update_technology(client, admin_user, seed_tech):
 
 
 @pytest.mark.integration
-async def test_delete_technology_deactivates(client, admin_user, seed_tech):
+async def test_delete_technology_soft_deletes(client, admin_user, seed_tech):
     _, raw = admin_user
     _, tech = seed_tech
     resp = await client.delete(f"/api/v1/admin/technologies/{tech.id}", headers={"X-API-Key": raw})
@@ -311,7 +309,7 @@ async def test_delete_technology_deactivates(client, admin_user, seed_tech):
 
     list_resp = await client.get("/api/v1/admin/technologies", headers={"X-API-Key": raw})
     techs = [t for t in list_resp.json()["items"] if t["id"] == str(tech.id)]
-    assert techs[0]["active"] is False
+    assert techs == []
 
 
 @pytest.mark.integration

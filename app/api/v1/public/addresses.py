@@ -87,8 +87,8 @@ _AVAILABILITY_SQL = text("""
     JOIN technologies t ON t.id = c.technology_id
     JOIN technology_types tt ON tt.id = t.type_id
     WHERE c.status IN ('available', 'planned')
-      AND tt.active = TRUE
-      AND t.active = TRUE
+      AND tt.deleted_at IS NULL
+      AND t.deleted_at IS NULL
     GROUP BY tt.id, tt.public_name, tt.sort_order, c.status
     ORDER BY tt.sort_order
 """)

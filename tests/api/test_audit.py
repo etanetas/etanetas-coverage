@@ -59,11 +59,11 @@ async def seed_address(db_session):
 @pytest.fixture
 async def seed_tech(db_session):
     code = f"ATEST_{secrets.token_hex(3).upper()}"
-    tt = TechnologyType(code=code, display_name="AuditType", public_name="AT", sort_order=998, active=True)
+    tt = TechnologyType(code=code, display_name="AuditType", public_name="AT", sort_order=998)
     db_session.add(tt)
     await db_session.flush()
     tech = Technology(type_id=tt.id, variant_code=f"ATV_{secrets.token_hex(3).upper()}",
-                      display_name="AuditVariant", sort_order=998, active=True)
+                      display_name="AuditVariant", sort_order=998)
     db_session.add(tech)
     await db_session.flush()
     return tt, tech

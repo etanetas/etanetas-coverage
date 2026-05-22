@@ -1,5 +1,6 @@
 import uuid
-from sqlalchemy import Text, Integer, Boolean, ForeignKey, Index
+from datetime import datetime
+from sqlalchemy import DateTime, Text, Integer, ForeignKey, Index
 from sqlalchemy.orm import Mapped, mapped_column
 from app.models.base import Base
 
@@ -12,7 +13,7 @@ class TechnologyType(Base):
     display_name: Mapped[str] = mapped_column(Text)
     public_name: Mapped[str] = mapped_column(Text)
     sort_order: Mapped[int] = mapped_column(Integer, default=100)
-    active: Mapped[bool] = mapped_column(Boolean, default=True)
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     map_color: Mapped[str] = mapped_column(Text, default="#6b7280", server_default="#6b7280")
 
 
@@ -29,4 +30,4 @@ class Technology(Base):
     theoretical_max_dl_mbps: Mapped[int | None] = mapped_column(Integer)
     theoretical_max_ul_mbps: Mapped[int | None] = mapped_column(Integer)
     sort_order: Mapped[int] = mapped_column(Integer, default=100)
-    active: Mapped[bool] = mapped_column(Boolean, default=True)
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)

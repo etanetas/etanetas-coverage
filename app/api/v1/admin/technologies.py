@@ -18,6 +18,7 @@ from app.schemas.admin import (
     TechnologyTypeUpdate,
     TechnologyUpdate,
 )
+from app.time import now
 
 router = APIRouter(prefix="/api/v1/admin", tags=["admin-technologies"])
 
@@ -29,12 +30,12 @@ async def list_technology_types(
     page: Annotated[PaginationParams, Depends(pagination_params)],
     q: Annotated[str | None, Query(description="substring on name")] = None,
 ) -> Page[TechnologyTypeOut]:
-    stmt = select(TechnologyType)
-    count_stmt = select(func.count()).select_from(TechnologyType)
+    stmt = select(TechnologyType).where(TechnologyType.deleted_at.is_(None))
+    count_stmt = select(func.count()).select_from(TechnologyType).where(TechnologyType.deleted_at.is_(None))
     if q:
         like = f"%{q}%"
-        stmt = stmt.where(TechnologyType.name.ilike(like))
-        count_stmt = count_stmt.where(TechnologyType.name.ilike(like))
+        stmt = stmt.where(TechnologyType.display_name.ilike(like))
+        count_stmt = count_stmt.where(TechnologyType.display_name.ilike(like))
     total = int((await db.execute(count_stmt)).scalar() or 0)
     result = await db.execute(
         stmt.order_by(TechnologyType.sort_order).limit(page.limit).offset(page.offset)
@@ -70,11 +71,11 @@ async def list_technologies(
     q: Annotated[str | None, Query(description="substring on name or variant_code")] = None,
     type_id: Annotated[uuid.UUID | None, Query()] = None,
 ) -> Page[TechnologyOut]:
-    stmt = select(Technology)
-    count_stmt = select(func.count()).select_from(Technology)
+    stmt = select(Technology).where(Technology.deleted_at.is_(None))
+    count_stmt = select(func.count()).select_from(Technology).where(Technology.deleted_at.is_(None))
     if q:
         like = f"%{q}%"
-        cond = or_(Technology.name.ilike(like), Technology.variant_code.ilike(like))
+        cond = or_(Technology.display_name.ilike(like), Technology.variant_code.ilike(like))
         stmt = stmt.where(cond)
         count_stmt = count_stmt.where(cond)
     if type_id:
@@ -135,13 +136,15 @@ async def delete_technology(
     db: Annotated[AsyncSession, Depends(get_db)],
 ) -> None:
     tech = await _require_tech(db, tech_id)
-    tech.active = False
+    tech.deleted_at = now()
     await log_action(db, current_user.id, "technology", str(tech_id), "delete")
     await db.commit()
 
 
 async def _require_type(db: AsyncSession, type_id: uuid.UUID) -> TechnologyType:
-    result = await db.execute(select(TechnologyType).where(TechnologyType.id == type_id))
+    result = await db.execute(
+        select(TechnologyType).where(TechnologyType.id == type_id, TechnologyType.deleted_at.is_(None))
+    )
     tt = result.scalar_one_or_none()
     if tt is None:
         raise HTTPException(status_code=404, detail="Technology type not found")
@@ -149,7 +152,9 @@ async def _require_type(db: AsyncSession, type_id: uuid.UUID) -> TechnologyType:
 
 
 async def _require_tech(db: AsyncSession, tech_id: uuid.UUID) -> Technology:
-    result = await db.execute(select(Technology).where(Technology.id == tech_id))
+    result = await db.execute(
+        select(Technology).where(Technology.id == tech_id, Technology.deleted_at.is_(None))
+    )
     tech = result.scalar_one_or_none()
     if tech is None:
         raise HTTPException(status_code=404, detail="Technology not found")
