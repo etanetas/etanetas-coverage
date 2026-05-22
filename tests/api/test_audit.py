@@ -88,7 +88,7 @@ async def test_audit_log_created_on_offering_create(client, editor_user, admin_u
         headers={"X-API-Key": admin_raw},
     )
     assert resp.status_code == 200
-    entries = resp.json()
+    entries = resp.json()["items"]
     assert any(e["action"] == "create" and e["diff"]["address_code"] == seed_address for e in entries)
 
 
@@ -117,7 +117,7 @@ async def test_address_history(client, editor_user, admin_user, seed_address, se
         headers={"X-API-Key": admin_raw},
     )
     assert resp.status_code == 200
-    entries = resp.json()
+    entries = resp.json()["items"]
     actions = [e["action"] for e in entries]
     assert "create" in actions
     assert "update" in actions
@@ -147,5 +147,5 @@ async def test_audit_log_filter_by_entity_type(client, admin_user, seed_tech):
         headers={"X-API-Key": admin_raw},
     )
     assert resp.status_code == 200
-    entries = resp.json()
+    entries = resp.json()["items"]
     assert any(e["action"] == "update" for e in entries)

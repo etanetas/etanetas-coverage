@@ -94,26 +94,51 @@ async def seed_tech(db_session) -> tuple[TechnologyType, Technology]:
 @pytest.mark.integration
 async def test_address_search(client, admin_user, seed_address):
     _, raw = admin_user
-    resp = await client.post(
-        "/api/v1/admin/addresses/search",
-        json={"q": "CRUD g."},
+    resp = await client.get(
+        "/api/v1/admin/addresses",
+        params={"q": "CRUD g."},
         headers={"X-API-Key": raw},
     )
     assert resp.status_code == 200
     data = resp.json()
-    assert isinstance(data, list)
-    assert any(r["rc_code"] == seed_address for r in data)
+    assert "total" in data and "items" in data
+    assert any(r["rc_code"] == seed_address for r in data["items"])
 
 
 @pytest.mark.integration
 async def test_address_search_viewer_allowed(client, viewer_user, seed_address):
     _, raw = viewer_user
-    resp = await client.post(
-        "/api/v1/admin/addresses/search",
-        json={"q": "CRUD g."},
+    resp = await client.get(
+        "/api/v1/admin/addresses",
+        params={"q": "CRUD g."},
         headers={"X-API-Key": raw},
     )
     assert resp.status_code == 200
+
+
+@pytest.mark.integration
+async def test_address_list_no_q_paginates(client, admin_user, seed_address):
+    _, raw = admin_user
+    resp = await client.get(
+        "/api/v1/admin/addresses",
+        params={"limit": 5},
+        headers={"X-API-Key": raw},
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["total"] >= 1
+    assert len(data["items"]) <= 5
+
+
+@pytest.mark.integration
+async def test_address_list_limit_cap(client, admin_user):
+    _, raw = admin_user
+    resp = await client.get(
+        "/api/v1/admin/addresses",
+        params={"limit": 101},
+        headers={"X-API-Key": raw},
+    )
+    assert resp.status_code == 422
 
 
 @pytest.mark.integration
@@ -163,7 +188,7 @@ async def test_create_and_list_address_offering(client, editor_user, seed_addres
         headers={"X-API-Key": raw},
     )
     assert list_resp.status_code == 200
-    assert any(o["id"] == offering_id for o in list_resp.json())
+    assert any(o["id"] == offering_id for o in list_resp.json()["items"])
 
 
 @pytest.mark.integration
@@ -244,7 +269,7 @@ async def test_list_technologies(client, viewer_user, seed_tech):
     _, raw = viewer_user
     resp = await client.get("/api/v1/admin/technologies", headers={"X-API-Key": raw})
     assert resp.status_code == 200
-    assert isinstance(resp.json(), list)
+    assert "items" in resp.json()
 
 
 @pytest.mark.integration
@@ -285,7 +310,7 @@ async def test_delete_technology_deactivates(client, admin_user, seed_tech):
     assert resp.status_code == 204
 
     list_resp = await client.get("/api/v1/admin/technologies", headers={"X-API-Key": raw})
-    techs = [t for t in list_resp.json() if t["id"] == str(tech.id)]
+    techs = [t for t in list_resp.json()["items"] if t["id"] == str(tech.id)]
     assert techs[0]["active"] is False
 
 
@@ -317,7 +342,7 @@ async def test_list_zones(client, admin_user, seed_zone):
     resp = await client.get("/api/v1/admin/zones", headers={"X-API-Key": raw})
     assert resp.status_code == 200
     zone_id, _ = seed_zone
-    assert any(z["id"] == str(zone_id) for z in resp.json())
+    assert any(z["id"] == str(zone_id) for z in resp.json()["items"])
 
 
 @pytest.mark.integration
@@ -387,7 +412,8 @@ async def test_create_and_list_zone_offering(client, editor_user, seed_zone, see
         headers={"X-API-Key": raw},
     )
     assert list_resp.status_code == 200
-    assert len(list_resp.json()) == 1
+    assert list_resp.json()["total"] == 1
+    assert len(list_resp.json()["items"]) == 1
 
 
 @pytest.mark.integration
@@ -446,7 +472,7 @@ async def test_delete_zone_offering(client, editor_user, seed_zone, seed_tech):
     assert del_resp.status_code == 204
 
     list_resp = await client.get(f"/api/v1/admin/zones/{zone_id}/offerings", headers={"X-API-Key": raw})
-    assert not any(o["id"] == offering_id for o in list_resp.json())
+    assert not any(o["id"] == offering_id for o in list_resp.json()["items"])
 
 
 @pytest.mark.integration

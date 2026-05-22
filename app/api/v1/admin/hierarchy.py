@@ -7,6 +7,7 @@ from pydantic import BaseModel
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api.pagination import Page, PaginationParams, pagination_params
 from app.auth import get_current_user
 from app.dependencies import get_db
 from app.models.admin import User
@@ -41,88 +42,92 @@ class StreetOut(BaseModel):
     full_name: str
 
 
-@router.get("/counties", response_model=list[CountyOut])
+async def _paginated(
+    db: AsyncSession,
+    table: str,
+    columns: str,
+    where: str,
+    order_by: str,
+    params: dict,
+    page: PaginationParams,
+) -> tuple[int, list[dict]]:
+    total = int(
+        (await db.execute(text(f"SELECT COUNT(*) FROM {table} {where}"), params)).scalar() or 0
+    )
+    params = {**params, "limit": page.limit, "offset": page.offset}
+    rows = (await db.execute(
+        text(f"SELECT {columns} FROM {table} {where} ORDER BY {order_by} LIMIT :limit OFFSET :offset"),
+        params,
+    )).mappings().all()
+    return total, list(rows)
+
+
+@router.get("/counties", response_model=Page[CountyOut])
 async def list_counties(
     current_user: Annotated[User, Depends(get_current_user)],
     db: Annotated[AsyncSession, Depends(get_db)],
-) -> list[CountyOut]:
-    rows = (await db.execute(
-        text("SELECT rc_code, name FROM counties ORDER BY name")
-    )).mappings().all()
-    return [CountyOut(**r) for r in rows]
+    page: Annotated[PaginationParams, Depends(pagination_params)],
+) -> Page[CountyOut]:
+    total, rows = await _paginated(db, "counties", "rc_code, name", "", "name", {}, page)
+    return Page[CountyOut](total=total, items=[CountyOut(**r) for r in rows])
 
 
-@router.get("/municipalities", response_model=list[MunicipalityOut])
+@router.get("/municipalities", response_model=Page[MunicipalityOut])
 async def list_municipalities(
     current_user: Annotated[User, Depends(get_current_user)],
     db: Annotated[AsyncSession, Depends(get_db)],
+    page: Annotated[PaginationParams, Depends(pagination_params)],
     county_code: int | None = Query(None),
-) -> list[MunicipalityOut]:
-    if county_code is not None:
-        rows = (await db.execute(
-            text("SELECT rc_code, county_code, name, type FROM municipalities WHERE county_code = :c ORDER BY name"),
-            {"c": county_code},
-        )).mappings().all()
-    else:
-        rows = (await db.execute(
-            text("SELECT rc_code, county_code, name, type FROM municipalities ORDER BY name")
-        )).mappings().all()
-    return [MunicipalityOut(**r) for r in rows]
+) -> Page[MunicipalityOut]:
+    where = "WHERE county_code = :c" if county_code is not None else ""
+    params = {"c": county_code} if county_code is not None else {}
+    total, rows = await _paginated(
+        db, "municipalities", "rc_code, county_code, name, type", where, "name", params, page
+    )
+    return Page[MunicipalityOut](total=total, items=[MunicipalityOut(**r) for r in rows])
 
 
-@router.get("/localities", response_model=list[LocalityOut])
+@router.get("/localities", response_model=Page[LocalityOut])
 async def list_localities(
     current_user: Annotated[User, Depends(get_current_user)],
     db: Annotated[AsyncSession, Depends(get_db)],
+    page: Annotated[PaginationParams, Depends(pagination_params)],
     muni_code: int | None = Query(None),
     q: str | None = Query(None, description="autocomplete prefix/substring"),
-    limit: int = Query(100, ge=1, le=500),
-) -> list[LocalityOut]:
+) -> Page[LocalityOut]:
     filters = []
-    params: dict = {"limit": limit}
+    params: dict = {}
     if muni_code is not None:
         filters.append("muni_code = :muni_code")
         params["muni_code"] = muni_code
     if q:
         filters.append("(name ILIKE :q OR name_k ILIKE :q)")
         params["q"] = f"%{q}%"
-
     where = ("WHERE " + " AND ".join(filters)) if filters else ""
-    sql = text(f"""
-        SELECT rc_code, muni_code, name, type, type_abbr
-        FROM localities
-        {where}
-        ORDER BY name
-        LIMIT :limit
-    """)
-    rows = (await db.execute(sql, params)).mappings().all()
-    return [LocalityOut(**r) for r in rows]
+    total, rows = await _paginated(
+        db, "localities", "rc_code, muni_code, name, type, type_abbr", where, "name", params, page
+    )
+    return Page[LocalityOut](total=total, items=[LocalityOut(**r) for r in rows])
 
 
-@router.get("/streets", response_model=list[StreetOut])
+@router.get("/streets", response_model=Page[StreetOut])
 async def list_streets(
     current_user: Annotated[User, Depends(get_current_user)],
     db: Annotated[AsyncSession, Depends(get_db)],
+    page: Annotated[PaginationParams, Depends(pagination_params)],
     locality_code: int | None = Query(None),
     q: str | None = Query(None, description="autocomplete prefix/substring"),
-    limit: int = Query(100, ge=1, le=500),
-) -> list[StreetOut]:
+) -> Page[StreetOut]:
     filters = []
-    params: dict = {"limit": limit}
+    params: dict = {}
     if locality_code is not None:
         filters.append("locality_code = :locality_code")
         params["locality_code"] = locality_code
     if q:
         filters.append("(name ILIKE :q OR full_name ILIKE :q)")
         params["q"] = f"%{q}%"
-
     where = ("WHERE " + " AND ".join(filters)) if filters else ""
-    sql = text(f"""
-        SELECT rc_code, locality_code, name, full_name
-        FROM streets
-        {where}
-        ORDER BY name
-        LIMIT :limit
-    """)
-    rows = (await db.execute(sql, params)).mappings().all()
-    return [StreetOut(**r) for r in rows]
+    total, rows = await _paginated(
+        db, "streets", "rc_code, locality_code, name, full_name", where, "name", params, page
+    )
+    return Page[StreetOut](total=total, items=[StreetOut(**r) for r in rows])

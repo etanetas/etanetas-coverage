@@ -1,10 +1,11 @@
 import uuid
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import select
+from fastapi import APIRouter, Depends, HTTPException, Query
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api.pagination import Page, PaginationParams, pagination_params
 from app.audit import log_action
 from app.auth import require_role
 from app.dependencies import get_db
@@ -21,13 +22,25 @@ from app.schemas.admin import (
 router = APIRouter(prefix="/api/v1/admin", tags=["admin-technologies"])
 
 
-@router.get("/technology-types", response_model=list[TechnologyTypeOut])
+@router.get("/technology-types", response_model=Page[TechnologyTypeOut])
 async def list_technology_types(
     current_user: Annotated[User, Depends(require_role("viewer", "editor", "admin"))],
     db: Annotated[AsyncSession, Depends(get_db)],
-) -> list[TechnologyType]:
-    result = await db.execute(select(TechnologyType).order_by(TechnologyType.sort_order))
-    return list(result.scalars().all())
+    page: Annotated[PaginationParams, Depends(pagination_params)],
+    q: Annotated[str | None, Query(description="substring on name")] = None,
+) -> Page[TechnologyTypeOut]:
+    stmt = select(TechnologyType)
+    count_stmt = select(func.count()).select_from(TechnologyType)
+    if q:
+        like = f"%{q}%"
+        stmt = stmt.where(TechnologyType.name.ilike(like))
+        count_stmt = count_stmt.where(TechnologyType.name.ilike(like))
+    total = int((await db.execute(count_stmt)).scalar() or 0)
+    result = await db.execute(
+        stmt.order_by(TechnologyType.sort_order).limit(page.limit).offset(page.offset)
+    )
+    items = [TechnologyTypeOut.model_validate(t) for t in result.scalars().all()]
+    return Page[TechnologyTypeOut](total=total, items=items)
 
 
 @router.put("/technology-types/{type_id}", response_model=TechnologyTypeOut)
@@ -49,13 +62,30 @@ async def update_technology_type(
     return tt
 
 
-@router.get("/technologies", response_model=list[TechnologyOut])
+@router.get("/technologies", response_model=Page[TechnologyOut])
 async def list_technologies(
     current_user: Annotated[User, Depends(require_role("viewer", "editor", "admin"))],
     db: Annotated[AsyncSession, Depends(get_db)],
-) -> list[Technology]:
-    result = await db.execute(select(Technology).order_by(Technology.sort_order))
-    return list(result.scalars().all())
+    page: Annotated[PaginationParams, Depends(pagination_params)],
+    q: Annotated[str | None, Query(description="substring on name or variant_code")] = None,
+    type_id: Annotated[uuid.UUID | None, Query()] = None,
+) -> Page[TechnologyOut]:
+    stmt = select(Technology)
+    count_stmt = select(func.count()).select_from(Technology)
+    if q:
+        like = f"%{q}%"
+        cond = or_(Technology.name.ilike(like), Technology.variant_code.ilike(like))
+        stmt = stmt.where(cond)
+        count_stmt = count_stmt.where(cond)
+    if type_id:
+        stmt = stmt.where(Technology.type_id == type_id)
+        count_stmt = count_stmt.where(Technology.type_id == type_id)
+    total = int((await db.execute(count_stmt)).scalar() or 0)
+    result = await db.execute(
+        stmt.order_by(Technology.sort_order).limit(page.limit).offset(page.offset)
+    )
+    items = [TechnologyOut.model_validate(t) for t in result.scalars().all()]
+    return Page[TechnologyOut](total=total, items=items)
 
 
 @router.post("/technologies", response_model=TechnologyOut, status_code=201)
