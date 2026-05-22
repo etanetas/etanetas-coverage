@@ -160,6 +160,11 @@ async def create_api_key(
 
     api_key = ApiKey(user_id=user_id, key_hash=key_hash, key_prefix=key_prefix, name=body.name)
     db.add(api_key)
+    await db.flush()
+    await log_action(
+        db, current_user.id, "api_key", str(api_key.id), "create",
+        {"user_id": str(user_id), "name": body.name},
+    )
     await db.commit()
     await db.refresh(api_key)
 
@@ -188,6 +193,10 @@ async def revoke_api_key(
         raise HTTPException(status_code=409, detail="API key already revoked")
 
     key.revoked_at = now()
+    await log_action(
+        db, current_user.id, "api_key", str(key_id), "revoke",
+        {"user_id": str(key.user_id), "name": key.name},
+    )
     await db.commit()
 
 
