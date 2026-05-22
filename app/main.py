@@ -1,13 +1,13 @@
 import logging
 
 from fastapi import FastAPI
-from fastapi.responses import JSONResponse
-
-log = logging.getLogger(__name__)
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 from sqlalchemy import text
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from app.api.v1.admin.addresses import router as admin_addresses_router
 from app.api.v1.admin.audit import router as admin_audit_router
@@ -21,10 +21,17 @@ from app.api.v1.admin.zones import router as admin_zones_router
 from app.api.v1.public.addresses import router as public_addresses_router
 from app.config import settings
 from app.database import AsyncSessionLocal, engine
+from app.errors import (
+    http_exception_handler,
+    unhandled_exception_handler,
+    validation_exception_handler,
+)
 from app.limiter import limiter
 from app.logging_config import configure_logging
 from app.middleware import RequestIDMiddleware
 from app.telemetry import configure_telemetry
+
+log = logging.getLogger(__name__)
 
 configure_logging()
 
@@ -35,6 +42,9 @@ app = FastAPI(
 
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+app.add_exception_handler(StarletteHTTPException, http_exception_handler)
+app.add_exception_handler(RequestValidationError, validation_exception_handler)
+app.add_exception_handler(Exception, unhandled_exception_handler)
 
 app.add_middleware(RequestIDMiddleware)
 app.add_middleware(
