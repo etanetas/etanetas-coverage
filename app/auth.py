@@ -1,9 +1,10 @@
+import asyncio
 import logging
 import uuid
 from typing import Annotated
 
 import bcrypt
-from fastapi import BackgroundTasks, Depends, HTTPException, Security
+from fastapi import Depends, HTTPException, Security
 from fastapi.security import APIKeyHeader
 from sqlalchemy import or_, select, update
 from sqlalchemy.exc import SQLAlchemyError
@@ -13,6 +14,9 @@ from app.database import AsyncSessionLocal
 from app.dependencies import get_db
 from app.models.admin import ApiKey, User
 from app.time import now
+
+# Hold strong refs to background tasks so GC doesn't cancel them.
+_background_tasks: set[asyncio.Task] = set()
 
 log = logging.getLogger(__name__)
 
@@ -41,7 +45,6 @@ def require_role(*roles: str):
 
 
 async def get_current_user(
-    background: BackgroundTasks,
     raw_key: Annotated[str, Security(_api_key_header)],
     db: Annotated[AsyncSession, Depends(get_db)],
 ) -> User:
@@ -59,12 +62,14 @@ async def get_current_user(
 
     for api_key, user in rows:
         if bcrypt.checkpw(raw_key.encode(), api_key.key_hash.encode()):
-            # Throttle: only schedule an update if last_used_at is >60s ago (or NULL)
+            # Throttle: only spawn an update task if last_used_at is >60s ago (or NULL)
             if (
                 api_key.last_used_at is None
                 or (current - api_key.last_used_at).total_seconds() > 60
             ):
-                background.add_task(_update_last_used, api_key.id)
+                task = asyncio.create_task(_update_last_used(api_key.id))
+                _background_tasks.add(task)
+                task.add_done_callback(_background_tasks.discard)
             return user
 
     raise HTTPException(status_code=401, detail="Invalid or missing API key")

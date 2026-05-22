@@ -34,12 +34,15 @@ async def get_audit_log(
     current_user: Annotated[User, Depends(require_role("admin"))],
     db: Annotated[AsyncSession, Depends(get_db)],
     page: Annotated[PaginationParams, Depends(pagination_params)],
-    entity_type: str | None = Query(None),
-    entity_id: str | None = Query(None),
+    entity_type: Annotated[str | None, Query(max_length=64)] = None,
+    entity_id: Annotated[str | None, Query(max_length=128)] = None,
     user_id: uuid.UUID | None = Query(None),
     since: datetime | None = Query(None),
     until: datetime | None = Query(None),
 ) -> Page[AuditLogOut]:
+    if since and until and since >= until:
+        from app.errors import raise_error
+        raise_error(422, "VALIDATION_ERROR", "`since` must be before `until`")
     filters = []
     params: dict = {}
 
@@ -78,6 +81,8 @@ async def get_address_history(
     db: Annotated[AsyncSession, Depends(get_db)],
     page: Annotated[PaginationParams, Depends(pagination_params)],
 ) -> Page[AuditLogOut]:
+    # NOTE: predicate is a full-scan of audit_log because there is no functional
+    # index on (diff->>'address_code'). See migration T2.2 (audit_log.address_code).
     where = (
         "WHERE al.entity_type = 'address_offering'"
         " AND (al.diff->>'address_code')::bigint = :rc_code"
