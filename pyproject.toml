@@ -31,6 +31,7 @@ dev = [
     "pytest-asyncio>=0.24.0",
     "pytest-mock>=3.14.0",
     "pytest-timeout>=2.3.0",
+    "ruff>=0.6.0",
 ]
 
 [tool.pytest.ini_options]
@@ -64,6 +65,7 @@ select = [
     "UP",  # pyupgrade
     "B",   # flake8-bugbear
     "C4",  # flake8-comprehensions
+    "DTZ", # flake8-datetimez (forbid naive datetime)
     "RUF", # ruff-specific rules
 ]
 ignore = [
