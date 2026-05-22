@@ -30,7 +30,7 @@ def _make_user(role: str):
         db_session.add(user)
         await db_session.flush()
         hashed = bcrypt.hashpw(raw.encode(), bcrypt.gensalt(rounds=4)).decode()
-        db_session.add(ApiKey(user_id=user.id, key_hash=hashed, name="k"))
+        db_session.add(ApiKey(user_id=user.id, key_hash=hashed, key_prefix=raw[:11], name="k"))
         await db_session.flush()
         return user, raw
     fx.__name__ = f"{role}_user"
@@ -62,11 +62,11 @@ async def locality_code(db_session) -> int:
 @pytest.fixture
 async def tech(db_session) -> Technology:
     code = f"BULK_{secrets.token_hex(3).upper()}"
-    tt = TechnologyType(code=code, display_name="BulkType", public_name="BT", sort_order=997, active=True)
+    tt = TechnologyType(code=code, display_name="BulkType", public_name="BT", sort_order=997)
     db_session.add(tt)
     await db_session.flush()
     t = Technology(type_id=tt.id, variant_code=f"BTV_{secrets.token_hex(3).upper()}",
-                   display_name="BulkVariant", sort_order=997, active=True)
+                   display_name="BulkVariant", sort_order=997)
     db_session.add(t)
     await db_session.flush()
     return t

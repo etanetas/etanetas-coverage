@@ -81,11 +81,8 @@ async def get_address_history(
     db: Annotated[AsyncSession, Depends(get_db)],
     page: Annotated[PaginationParams, Depends(pagination_params)],
 ) -> Page[AuditLogOut]:
-    # NOTE: predicate is a full-scan of audit_log because there is no functional
-    # index on (diff->>'address_code'). See migration T2.2 (audit_log.address_code).
     where = (
-        "WHERE al.entity_type = 'address_offering'"
-        " AND (al.diff->>'address_code')::bigint = :rc_code"
+        "WHERE al.address_code = :rc_code"
     )
     total = int(
         (

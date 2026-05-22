@@ -191,7 +191,6 @@ class TechnologyTypeOut(BaseModel):
     display_name: str
     public_name: str
     sort_order: int
-    active: bool
     map_color: str
 
     model_config = {"from_attributes": True}
@@ -201,7 +200,6 @@ class TechnologyTypeUpdate(BaseModel):
     display_name: str | None = None
     public_name: str | None = None
     sort_order: int | None = None
-    active: bool | None = None
     map_color: str | None = None
 
 
@@ -213,7 +211,6 @@ class TechnologyOut(BaseModel):
     theoretical_max_dl_mbps: int | None
     theoretical_max_ul_mbps: int | None
     sort_order: int
-    active: bool
 
     model_config = {"from_attributes": True}
 
@@ -225,7 +222,6 @@ class TechnologyCreate(BaseModel):
     theoretical_max_dl_mbps: int | None = None
     theoretical_max_ul_mbps: int | None = None
     sort_order: int = 100
-    active: bool = True
 
 
 class TechnologyUpdate(BaseModel):
@@ -233,7 +229,6 @@ class TechnologyUpdate(BaseModel):
     theoretical_max_dl_mbps: int | None = None
     theoretical_max_ul_mbps: int | None = None
     sort_order: int | None = None
-    active: bool | None = None
 
 
 # ---------------------------------------------------------------------------

@@ -37,7 +37,7 @@ async def admin(db_session) -> tuple[User, str]:
     user = User(username=name, email=f"{name}@example.com", role="admin", active=True)
     db_session.add(user)
     await db_session.flush()
-    db_session.add(ApiKey(user_id=user.id, key_hash=_hash(raw), name="k"))
+    db_session.add(ApiKey(user_id=user.id, key_hash=_hash(raw), key_prefix=raw[:11], name="k"))
     await db_session.flush()
     return user, raw
 
@@ -49,7 +49,7 @@ async def viewer(db_session) -> tuple[User, str]:
     user = User(username=name, email=f"{name}@example.com", role="viewer", active=True)
     db_session.add(user)
     await db_session.flush()
-    db_session.add(ApiKey(user_id=user.id, key_hash=_hash(raw), name="k"))
+    db_session.add(ApiKey(user_id=user.id, key_hash=_hash(raw), key_prefix=raw[:11], name="k"))
     await db_session.flush()
     return user, raw
 

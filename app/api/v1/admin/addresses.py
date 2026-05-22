@@ -279,6 +279,7 @@ async def create_address_offering(
         str(offering.id),
         "create",
         {"address_code": rc_code, **body.model_dump()},
+        address_code=rc_code,
     )
     await db.commit()
     await db.refresh(offering)
@@ -306,6 +307,7 @@ async def update_address_offering(
         str(offering_id),
         "update",
         {"address_code": offering.address_code, **changes},
+        address_code=offering.address_code,
     )
     await db.commit()
     await db.refresh(offering)
@@ -328,6 +330,7 @@ async def delete_address_offering(
         str(offering_id),
         "delete",
         {"address_code": address_code},
+        address_code=address_code,
     )
     await db.commit()
 

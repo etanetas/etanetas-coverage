@@ -78,8 +78,8 @@ async def test_availability_structure(client, seed_address):
 @pytest.mark.integration
 async def test_availability_with_zone_offering(client, db_session, seed_address):
     stmts = [
-        "INSERT INTO technology_types (id, code, display_name, public_name, sort_order, active) VALUES ('aa000000-0000-0000-0000-000000000001', 'TEST_FIBER', 'Test Fiber', 'Test Fiber', 99, true) ON CONFLICT DO NOTHING",
-        "INSERT INTO technologies (id, type_id, variant_code, display_name, sort_order, active) VALUES ('bb000000-0000-0000-0000-000000000001', 'aa000000-0000-0000-0000-000000000001', 'test_gpon', 'Test GPON', 99, true) ON CONFLICT DO NOTHING",
+        "INSERT INTO technology_types (id, code, display_name, public_name, sort_order) VALUES ('aa000000-0000-0000-0000-000000000001', 'TEST_FIBER', 'Test Fiber', 'Test Fiber', 99) ON CONFLICT DO NOTHING",
+        "INSERT INTO technologies (id, type_id, variant_code, display_name, sort_order) VALUES ('bb000000-0000-0000-0000-000000000001', 'aa000000-0000-0000-0000-000000000001', 'test_gpon', 'Test GPON', 99) ON CONFLICT DO NOTHING",
         "INSERT INTO users (id, username, email, role, active, created_at) VALUES ('cc000000-0000-0000-0000-000000000001', 'testuser_zone', 'testzone@test.lt', 'admin', true, NOW()) ON CONFLICT DO NOTHING",
         "INSERT INTO service_zones (id, name, polygon, priority, created_by, created_at) VALUES ('dd000000-0000-0000-0000-000000000001', 'Test Zone', ST_GeomFromEWKT('SRID=4326;MULTIPOLYGON(((24.0 53.0, 26.0 53.0, 26.0 55.0, 24.0 55.0, 24.0 53.0)))'), 100, 'cc000000-0000-0000-0000-000000000001', NOW()) ON CONFLICT DO NOTHING",
         "INSERT INTO zone_offerings (id, zone_id, technology_id, status, max_download_mbps, max_upload_mbps, status_since, created_at, updated_at) VALUES ('ee000000-0000-0000-0000-000000000001', 'dd000000-0000-0000-0000-000000000001', 'bb000000-0000-0000-0000-000000000001', 'available', 1000, 500, CURRENT_DATE, NOW(), NOW()) ON CONFLICT DO NOTHING",

@@ -36,7 +36,7 @@ def _mk(role: str):
         db_session.add(user)
         await db_session.flush()
         hashed = bcrypt.hashpw(raw.encode(), bcrypt.gensalt(rounds=4)).decode()
-        db_session.add(ApiKey(user_id=user.id, key_hash=hashed, name="k"))
+        db_session.add(ApiKey(user_id=user.id, key_hash=hashed, key_prefix=raw[:11], name="k"))
         await db_session.flush()
         return user, raw
     fixture.__name__ = f"{role}_user"
@@ -70,7 +70,6 @@ async def seed_tech(db_session) -> tuple[TechnologyType, Technology]:
         display_name="Test Type",
         public_name="TestNet",
         sort_order=999,
-        active=True,
     )
     db_session.add(tt)
     await db_session.flush()
@@ -80,7 +79,6 @@ async def seed_tech(db_session) -> tuple[TechnologyType, Technology]:
         variant_code=f"TEST_V_{secrets.token_hex(3).upper()}",
         display_name="Test Variant",
         sort_order=999,
-        active=True,
     )
     db_session.add(tech)
     await db_session.flush()
@@ -303,7 +301,7 @@ async def test_update_technology(client, admin_user, seed_tech):
 
 
 @pytest.mark.integration
-async def test_delete_technology_deactivates(client, admin_user, seed_tech):
+async def test_delete_technology_soft_deletes(client, admin_user, seed_tech):
     _, raw = admin_user
     _, tech = seed_tech
     resp = await client.delete(f"/api/v1/admin/technologies/{tech.id}", headers={"X-API-Key": raw})
@@ -311,7 +309,7 @@ async def test_delete_technology_deactivates(client, admin_user, seed_tech):
 
     list_resp = await client.get("/api/v1/admin/technologies", headers={"X-API-Key": raw})
     techs = [t for t in list_resp.json()["items"] if t["id"] == str(tech.id)]
-    assert techs[0]["active"] is False
+    assert techs == []
 
 
 @pytest.mark.integration
@@ -386,6 +384,35 @@ async def test_delete_zone(client, admin_user, seed_zone):
     zone_id, _ = seed_zone
     resp = await client.delete(f"/api/v1/admin/zones/{zone_id}", headers={"X-API-Key": raw})
     assert resp.status_code == 204
+
+
+@pytest.mark.integration
+async def test_delete_zone_soft_excludes_from_list(client, admin_user, seed_zone):
+    _, raw = admin_user
+    zone_id, _ = seed_zone
+    del_resp = await client.delete(f"/api/v1/admin/zones/{zone_id}", headers={"X-API-Key": raw})
+    assert del_resp.status_code == 204
+    list_resp = await client.get("/api/v1/admin/zones", headers={"X-API-Key": raw})
+    assert list_resp.status_code == 200
+    assert not any(z["id"] == str(zone_id) for z in list_resp.json()["items"])
+
+
+@pytest.mark.integration
+async def test_delete_zone_soft_returns_404_on_detail(client, admin_user, seed_zone):
+    _, raw = admin_user
+    zone_id, _ = seed_zone
+    await client.delete(f"/api/v1/admin/zones/{zone_id}", headers={"X-API-Key": raw})
+    detail_resp = await client.get(f"/api/v1/admin/zones/{zone_id}/detail", headers={"X-API-Key": raw})
+    assert detail_resp.status_code == 404
+
+
+@pytest.mark.integration
+async def test_delete_zone_soft_cannot_delete_twice(client, admin_user, seed_zone):
+    _, raw = admin_user
+    zone_id, _ = seed_zone
+    await client.delete(f"/api/v1/admin/zones/{zone_id}", headers={"X-API-Key": raw})
+    second_resp = await client.delete(f"/api/v1/admin/zones/{zone_id}", headers={"X-API-Key": raw})
+    assert second_resp.status_code == 404
 
 
 @pytest.mark.integration

@@ -27,7 +27,7 @@ async def list_zones(
     q: Annotated[str | None, Query(description="substring match on zone name")] = None,
     priority_min: Annotated[int | None, Query()] = None,
 ) -> Page[ZoneOut]:
-    filters = []
+    filters = ["deleted_at IS NULL"]
     params: dict = {}
     if q:
         filters.append("name ILIKE :q")
@@ -35,7 +35,7 @@ async def list_zones(
     if priority_min is not None:
         filters.append("priority >= :priority_min")
         params["priority_min"] = priority_min
-    where = ("WHERE " + " AND ".join(filters)) if filters else ""
+    where = "WHERE " + " AND ".join(filters)
 
     total = int(
         (await db.execute(text(f"SELECT COUNT(*) FROM service_zones {where}"), params)).scalar() or 0
@@ -192,8 +192,8 @@ async def delete_zone(
     db: Annotated[AsyncSession, Depends(get_db)],
 ) -> None:
     zone = await _require_zone(db, zone_id)
+    zone.deleted_at = now()
     await log_action(db, current_user.id, "service_zone", str(zone_id), "delete", {"name": zone.name})
-    await db.delete(zone)
     await db.commit()
 
 
@@ -309,6 +309,7 @@ async def list_zone_addresses(
         SELECT COUNT(*) FROM addresses a
         JOIN service_zones z ON ST_Contains(z.polygon::geometry, a.point::geometry)
         WHERE z.id = CAST(:zid AS uuid)
+          AND z.deleted_at IS NULL
           AND a.deleted_at IS NULL
           AND a.address_type = 'building'
     """), {"zid": str(zone_id)})
@@ -325,6 +326,7 @@ async def list_zone_addresses(
         JOIN localities l ON l.rc_code = a.locality_code
         LEFT JOIN streets s ON s.rc_code = a.street_code
         WHERE z.id = CAST(:zid AS uuid)
+          AND z.deleted_at IS NULL
           AND a.deleted_at IS NULL
           AND a.address_type = 'building'
         ORDER BY a.rc_code
@@ -338,7 +340,9 @@ async def list_zone_addresses(
 
 
 async def _require_zone(db: AsyncSession, zone_id: uuid.UUID) -> ServiceZone:
-    result = await db.execute(select(ServiceZone).where(ServiceZone.id == zone_id))
+    result = await db.execute(
+        select(ServiceZone).where(ServiceZone.id == zone_id, ServiceZone.deleted_at.is_(None))
+    )
     zone = result.scalar_one_or_none()
     if zone is None:
         raise HTTPException(status_code=404, detail="Zone not found")

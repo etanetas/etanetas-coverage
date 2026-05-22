@@ -20,6 +20,7 @@ async def log_action(
     entity_id: str,
     action: str,
     diff: dict | None = None,
+    address_code: int | None = None,
 ) -> None:
     """Append an audit entry to the session. The caller must commit."""
     db.add(AuditLog(
@@ -29,4 +30,5 @@ async def log_action(
         action=action,
         diff=_jsonify(diff) if diff is not None else None,
         at=now(),
+        address_code=address_code,
     ))

@@ -39,7 +39,7 @@ async def active_user(db_session) -> User:
 @pytest.fixture
 async def valid_key(db_session, active_user) -> tuple[User, ApiKey, str]:
     raw, hashed = _make_key()
-    key = ApiKey(user_id=active_user.id, key_hash=hashed, name="valid")
+    key = ApiKey(user_id=active_user.id, key_hash=hashed, key_prefix=raw[:11], name="valid")
     db_session.add(key)
     await db_session.flush()
     return active_user, key, raw
@@ -74,6 +74,7 @@ async def test_me_revoked_key(client, db_session, active_user):
     key = ApiKey(
         user_id=active_user.id,
         key_hash=hashed,
+        key_prefix=raw[:11],
         name="revoked",
         revoked_at=datetime.now(),
     )
@@ -90,6 +91,7 @@ async def test_me_expired_key(client, db_session, active_user):
     key = ApiKey(
         user_id=active_user.id,
         key_hash=hashed,
+        key_prefix=raw[:11],
         name="expired",
         expires_at=datetime.now() - timedelta(days=1),
     )
@@ -108,7 +110,7 @@ async def test_me_inactive_user(client, db_session):
     db_session.add(user)
     await db_session.flush()
 
-    key = ApiKey(user_id=user.id, key_hash=hashed, name="inactive-user-key")
+    key = ApiKey(user_id=user.id, key_hash=hashed, key_prefix=raw[:11], name="inactive-user-key")
     db_session.add(key)
     await db_session.flush()
 
