@@ -155,9 +155,10 @@ async def create_api_key(
     await _require_user(db, user_id)
 
     raw_key = "etn_pk_" + secrets.token_urlsafe(32)
+    key_prefix = raw_key[:11]
     key_hash = bcrypt.hashpw(raw_key.encode(), bcrypt.gensalt(rounds=settings.bcrypt_rounds)).decode()
 
-    api_key = ApiKey(user_id=user_id, key_hash=key_hash, name=body.name)
+    api_key = ApiKey(user_id=user_id, key_hash=key_hash, key_prefix=key_prefix, name=body.name)
     db.add(api_key)
     await db.commit()
     await db.refresh(api_key)

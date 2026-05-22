@@ -28,7 +28,7 @@ async def admin(db_session) -> tuple[User, str]:
     db_session.add(user)
     await db_session.flush()
     hashed = bcrypt.hashpw(raw.encode(), bcrypt.gensalt(rounds=4)).decode()
-    db_session.add(ApiKey(user_id=user.id, key_hash=hashed, name="k"))
+    db_session.add(ApiKey(user_id=user.id, key_hash=hashed, key_prefix=raw[:11], name="k"))
     await db_session.flush()
     return user, raw
 
