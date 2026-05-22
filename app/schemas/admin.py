@@ -4,6 +4,11 @@ from typing import Annotated, Literal
 
 from pydantic import BaseModel, EmailStr, Field, model_validator
 
+
+class PolygonGeoJSON(BaseModel):
+    type: Literal["Polygon", "MultiPolygon"]
+    coordinates: list  # nested list — stays loose, GeoJSON spec is recursive
+
 # ---------------------------------------------------------------------------
 # Users
 # ---------------------------------------------------------------------------
@@ -170,14 +175,14 @@ class ZoneCreate(BaseModel):
     name: str
     description: str | None = None
     priority: int = 100
-    polygon_geojson: dict | None = None
+    polygon_geojson: PolygonGeoJSON | None = None
 
 
 class ZoneUpdate(BaseModel):
     name: str | None = None
     description: str | None = None
     priority: int | None = None
-    polygon_geojson: dict | None = None
+    polygon_geojson: PolygonGeoJSON | None = None
 
 
 # ---------------------------------------------------------------------------

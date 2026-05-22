@@ -129,7 +129,7 @@ async def create_zone(
     if body.polygon_geojson is not None:
         await db.execute(
             text("UPDATE service_zones SET polygon = ST_SetSRID(ST_GeomFromGeoJSON(:geojson), 4326) WHERE id = :id"),
-            {"geojson": json.dumps(body.polygon_geojson), "id": str(zone.id)},
+            {"geojson": body.polygon_geojson.model_dump_json(), "id": str(zone.id)},
         )
 
     await log_action(db, current_user.id, "service_zone", str(zone.id), "create",
@@ -142,7 +142,7 @@ async def create_zone(
         description=zone.description,
         priority=zone.priority,
         has_polygon=zone.polygon is not None,
-        polygon_geojson=body.polygon_geojson,
+        polygon_geojson=body.polygon_geojson.model_dump() if body.polygon_geojson is not None else None,
         created_at=zone.created_at,
     )
 
@@ -156,19 +156,27 @@ async def update_zone(
 ) -> ZoneOut:
     zone = await _require_zone(db, zone_id)
 
-    if body.name is not None:
+    fields = body.model_fields_set
+
+    if "name" in fields and body.name is not None:
         zone.name = body.name
-    if body.description is not None:
+    if "description" in fields:
         zone.description = body.description
-    if body.priority is not None:
+    if "priority" in fields and body.priority is not None:
         zone.priority = body.priority
 
-    if body.polygon_geojson is not None:
+    if "polygon_geojson" in fields:
         await db.flush()
-        await db.execute(
-            text("UPDATE service_zones SET polygon = ST_SetSRID(ST_GeomFromGeoJSON(:geojson), 4326) WHERE id = :id"),
-            {"geojson": json.dumps(body.polygon_geojson), "id": str(zone_id)},
-        )
+        if body.polygon_geojson is None:
+            await db.execute(
+                text("UPDATE service_zones SET polygon = NULL WHERE id = :id"),
+                {"id": str(zone_id)},
+            )
+        else:
+            await db.execute(
+                text("UPDATE service_zones SET polygon = ST_SetSRID(ST_GeomFromGeoJSON(:gj), 4326) WHERE id = :id"),
+                {"gj": body.polygon_geojson.model_dump_json(), "id": str(zone_id)},
+            )
 
     changes = body.model_dump(exclude_none=True, exclude={"polygon_geojson"})
     await log_action(db, current_user.id, "service_zone", str(zone_id), "update", changes or None)
@@ -180,7 +188,7 @@ async def update_zone(
         description=zone.description,
         priority=zone.priority,
         has_polygon=zone.polygon is not None,
-        polygon_geojson=body.polygon_geojson,
+        polygon_geojson=None,
         created_at=zone.created_at,
     )
 
