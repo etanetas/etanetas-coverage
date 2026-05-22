@@ -42,7 +42,9 @@ _EDITOR_RATE_LIMIT = 5000  # addresses per minute per editor
 
 
 @router.post("/bulk/preview", response_model=BulkPreviewResponse)
+@limiter.limit("30/minute")
 async def bulk_preview(
+    request: Request,
     body: BulkPreviewRequest,
     current_user: Annotated[User, Depends(require_role("editor", "admin"))],
     db: Annotated[AsyncSession, Depends(get_db)],

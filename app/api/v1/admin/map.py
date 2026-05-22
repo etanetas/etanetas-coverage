@@ -4,7 +4,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import Response
-from pydantic import BaseModel
+from pydantic import BaseModel, model_validator
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -141,9 +141,21 @@ async def map_zones_geojson(
                     media_type="application/json")
 
 
+_MAX_POLYGON_BYTES = 256 * 1024  # 256 KB cap to protect PostGIS from huge payloads
+
+
 class InPolygonRequest(BaseModel):
     polygon_geojson: dict  # GeoJSON Polygon or MultiPolygon
     limit: int = 10000
+
+    @model_validator(mode="after")
+    def _check_polygon_size(self):
+        serialized = json.dumps(self.polygon_geojson)
+        if len(serialized) > _MAX_POLYGON_BYTES:
+            raise ValueError(
+                f"polygon_geojson exceeds {_MAX_POLYGON_BYTES} bytes (got {len(serialized)})"
+            )
+        return self
 
 
 class InPolygonResponse(BaseModel):

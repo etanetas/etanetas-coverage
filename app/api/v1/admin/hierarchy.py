@@ -42,15 +42,26 @@ class StreetOut(BaseModel):
     full_name: str
 
 
+_ALLOWED_TABLES: dict[str, str] = {
+    "counties": "rc_code, name",
+    "municipalities": "rc_code, county_code, name, type",
+    "localities": "rc_code, muni_code, name, type, type_abbr",
+    "streets": "rc_code, locality_code, name, full_name",
+}
+
+
 async def _paginated(
     db: AsyncSession,
     table: str,
-    columns: str,
     where: str,
     order_by: str,
     params: dict,
     page: PaginationParams,
 ) -> tuple[int, list[dict]]:
+    """Internal pagination helper. `table` must be a key of `_ALLOWED_TABLES`."""
+    if table not in _ALLOWED_TABLES:
+        raise ValueError(f"unknown table: {table}")
+    columns = _ALLOWED_TABLES[table]
     total = int(
         (await db.execute(text(f"SELECT COUNT(*) FROM {table} {where}"), params)).scalar() or 0
     )
@@ -68,7 +79,7 @@ async def list_counties(
     db: Annotated[AsyncSession, Depends(get_db)],
     page: Annotated[PaginationParams, Depends(pagination_params)],
 ) -> Page[CountyOut]:
-    total, rows = await _paginated(db, "counties", "rc_code, name", "", "name", {}, page)
+    total, rows = await _paginated(db, "counties", "", "name", {}, page)
     return Page[CountyOut](total=total, items=[CountyOut(**r) for r in rows])
 
 
@@ -81,9 +92,7 @@ async def list_municipalities(
 ) -> Page[MunicipalityOut]:
     where = "WHERE county_code = :c" if county_code is not None else ""
     params = {"c": county_code} if county_code is not None else {}
-    total, rows = await _paginated(
-        db, "municipalities", "rc_code, county_code, name, type", where, "name", params, page
-    )
+    total, rows = await _paginated(db, "municipalities", where, "name", params, page)
     return Page[MunicipalityOut](total=total, items=[MunicipalityOut(**r) for r in rows])
 
 
@@ -104,9 +113,7 @@ async def list_localities(
         filters.append("(name ILIKE :q OR name_k ILIKE :q)")
         params["q"] = f"%{q}%"
     where = ("WHERE " + " AND ".join(filters)) if filters else ""
-    total, rows = await _paginated(
-        db, "localities", "rc_code, muni_code, name, type, type_abbr", where, "name", params, page
-    )
+    total, rows = await _paginated(db, "localities", where, "name", params, page)
     return Page[LocalityOut](total=total, items=[LocalityOut(**r) for r in rows])
 
 
@@ -127,7 +134,5 @@ async def list_streets(
         filters.append("(name ILIKE :q OR full_name ILIKE :q)")
         params["q"] = f"%{q}%"
     where = ("WHERE " + " AND ".join(filters)) if filters else ""
-    total, rows = await _paginated(
-        db, "streets", "rc_code, locality_code, name, full_name", where, "name", params, page
-    )
+    total, rows = await _paginated(db, "streets", where, "name", params, page)
     return Page[StreetOut](total=total, items=[StreetOut(**r) for r in rows])
