@@ -84,3 +84,4 @@ class AuditLog(Base):
     action: Mapped[str] = mapped_column(Text)
     diff: Mapped[dict | None] = mapped_column(JSONB)
     at: Mapped[datetime] = mapped_column(TIMESTAMP)
+    address_code: Mapped[int | None] = mapped_column(BigInteger, nullable=True, index=True)
