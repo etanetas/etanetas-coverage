@@ -1,12 +1,12 @@
-import asyncio
 import logging
 import uuid
 from typing import Annotated
 
 import bcrypt
-from fastapi import Depends, HTTPException, Security
+from fastapi import BackgroundTasks, Depends, HTTPException, Security
 from fastapi.security import APIKeyHeader
 from sqlalchemy import or_, select, update
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import AsyncSessionLocal
@@ -20,14 +20,15 @@ _api_key_header = APIKeyHeader(name="X-API-Key", auto_error=True)
 
 
 async def _update_last_used(key_id: uuid.UUID) -> None:
+    """Best-effort timestamp update — scheduled via BackgroundTasks after response."""
     try:
         async with AsyncSessionLocal() as session:
             await session.execute(
                 update(ApiKey).where(ApiKey.id == key_id).values(last_used_at=now())
             )
             await session.commit()
-    except Exception:
-        log.exception("Failed to update last_used_at for key %s", key_id)
+    except SQLAlchemyError as exc:
+        log.warning("Failed to update last_used_at for key %s: %s", key_id, exc)
 
 
 def require_role(*roles: str):
@@ -40,6 +41,7 @@ def require_role(*roles: str):
 
 
 async def get_current_user(
+    background: BackgroundTasks,
     raw_key: Annotated[str, Security(_api_key_header)],
     db: Annotated[AsyncSession, Depends(get_db)],
 ) -> User:
@@ -57,12 +59,12 @@ async def get_current_user(
 
     for api_key, user in rows:
         if bcrypt.checkpw(raw_key.encode(), api_key.key_hash.encode()):
-            # Throttle: only spawn an update task if last_used_at is >60s ago (or NULL)
+            # Throttle: only schedule an update if last_used_at is >60s ago (or NULL)
             if (
                 api_key.last_used_at is None
                 or (current - api_key.last_used_at).total_seconds() > 60
             ):
-                asyncio.create_task(_update_last_used(api_key.id))
+                background.add_task(_update_last_used, api_key.id)
             return user
 
     raise HTTPException(status_code=401, detail="Invalid or missing API key")
