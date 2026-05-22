@@ -2,7 +2,7 @@ import uuid
 from datetime import date, datetime
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel, EmailStr, Field, model_validator
 
 # ---------------------------------------------------------------------------
 # Users
@@ -250,6 +250,14 @@ class BulkFilter(BaseModel):
         return not any(
             [self.locality_code, self.street_codes, self.house_no_pattern, self.rc_codes]
         )
+
+    @model_validator(mode="after")
+    def _require_scope(self):
+        if not self.rc_codes and self.locality_code is None:
+            raise ValueError(
+                "Either rc_codes or locality_code is required (prevents nation-wide updates)"
+            )
+        return self
 
 
 class AddOfferingOperation(BaseModel):

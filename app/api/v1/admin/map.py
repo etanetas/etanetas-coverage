@@ -2,9 +2,9 @@ import json
 import logging
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import Response
-from pydantic import BaseModel, model_validator
+from pydantic import BaseModel, Field, model_validator
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -37,7 +37,7 @@ async def map_addresses(
     bbox: str,
     current_user: Annotated[User, Depends(get_current_user)],
     db: Annotated[AsyncSession, Depends(get_db)],
-    limit: int = 3000,
+    limit: Annotated[int, Query(ge=1, le=5000)] = 3000,
 ) -> Response:
     """
     GeoJSON FeatureCollection of building address points within bbox.
@@ -45,7 +45,6 @@ async def map_addresses(
     Only call at zoom >= 15 — returns at most 3000 points.
     """
     lon1, lat1, lon2, lat2 = _parse_bbox(bbox)
-    limit = min(max(limit, 1), 5000)
 
     sql = text("""
         SELECT json_build_object(
@@ -146,7 +145,7 @@ _MAX_POLYGON_BYTES = 256 * 1024  # 256 KB cap to protect PostGIS from huge paylo
 
 class InPolygonRequest(BaseModel):
     polygon_geojson: dict  # GeoJSON Polygon or MultiPolygon
-    limit: int = 10000
+    limit: int = Field(default=10000, ge=1, le=50000)
 
     @model_validator(mode="after")
     def _check_polygon_size(self):
@@ -170,7 +169,6 @@ async def addresses_in_polygon(
     db: Annotated[AsyncSession, Depends(get_db)],
 ) -> InPolygonResponse:
     """Return rc_codes of all buildings inside an ad-hoc polygon. For bulk-by-polygon flow."""
-    limit = min(max(body.limit, 1), 50000)
     geojson_str = json.dumps(body.polygon_geojson)
 
     count = await db.scalar(text("""
@@ -195,7 +193,7 @@ async def addresses_in_polygon(
           )
         ORDER BY a.rc_code
         LIMIT :limit
-    """), {"g": geojson_str, "limit": limit})
+    """), {"g": geojson_str, "limit": body.limit})
 
     return InPolygonResponse(
         total=int(count or 0),

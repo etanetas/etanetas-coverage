@@ -341,3 +341,19 @@ async def test_list_bulk_operations_viewer_allowed(client, viewer_user):
     _, raw = viewer_user
     resp = await client.get("/api/v1/admin/bulk-operations", headers={"X-API-Key": raw})
     assert resp.status_code == 200
+
+
+@pytest.mark.integration
+async def test_bulk_preview_rejects_unscoped(client, editor_user, tech):
+    """Filter with only house_no_pattern (no rc_codes, no locality_code) must be rejected."""
+    _, raw = editor_user
+    payload = {
+        "operation": _op(tech.id),
+        "filter": {"house_no_pattern": "%1%"},
+    }
+    resp = await client.post(
+        "/api/v1/admin/bulk/preview",
+        json=payload,
+        headers={"X-API-Key": raw},
+    )
+    assert resp.status_code == 422
