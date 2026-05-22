@@ -1,7 +1,6 @@
 import bcrypt
 import secrets
 import uuid
-from datetime import datetime
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -15,6 +14,7 @@ from app.config import settings
 from app.dependencies import get_db
 from app.models.admin import ApiKey, User
 from app.schemas.admin import ApiKeyCreate, ApiKeyCreated, ApiKeyOut, UserCreate, UserOut, UserUpdate
+from app.time import now
 
 router = APIRouter(prefix="/api/v1/admin", tags=["admin"])
 
@@ -117,9 +117,9 @@ async def delete_user(
     keys = await db.execute(
         select(ApiKey).where(ApiKey.user_id == user_id, ApiKey.revoked_at.is_(None))
     )
-    now = datetime.now()
+    current = now()
     for key in keys.scalars().all():
-        key.revoked_at = now
+        key.revoked_at = current
 
     await db.commit()
 
@@ -186,7 +186,7 @@ async def revoke_api_key(
     if key.revoked_at is not None:
         raise HTTPException(status_code=409, detail="API key already revoked")
 
-    key.revoked_at = datetime.now()
+    key.revoked_at = now()
     await db.commit()
 
 

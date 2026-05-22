@@ -1,7 +1,6 @@
 import asyncio
 import logging
 import uuid
-from datetime import datetime
 from typing import Annotated
 
 import bcrypt
@@ -13,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.database import AsyncSessionLocal
 from app.dependencies import get_db
 from app.models.admin import ApiKey, User
+from app.time import now
 
 log = logging.getLogger(__name__)
 
@@ -23,7 +23,7 @@ async def _update_last_used(key_id: uuid.UUID) -> None:
     try:
         async with AsyncSessionLocal() as session:
             await session.execute(
-                update(ApiKey).where(ApiKey.id == key_id).values(last_used_at=datetime.now())
+                update(ApiKey).where(ApiKey.id == key_id).values(last_used_at=now())
             )
             await session.commit()
     except Exception:
@@ -43,13 +43,13 @@ async def get_current_user(
     raw_key: Annotated[str, Security(_api_key_header)],
     db: Annotated[AsyncSession, Depends(get_db)],
 ) -> User:
-    now = datetime.now()
+    current = now()
     result = await db.execute(
         select(ApiKey, User)
         .join(User, ApiKey.user_id == User.id)
         .where(
             ApiKey.revoked_at.is_(None),
-            or_(ApiKey.expires_at.is_(None), ApiKey.expires_at > now),
+            or_(ApiKey.expires_at.is_(None), ApiKey.expires_at > current),
             User.active.is_(True),
         )
     )
@@ -60,7 +60,7 @@ async def get_current_user(
             # Throttle: only spawn an update task if last_used_at is >60s ago (or NULL)
             if (
                 api_key.last_used_at is None
-                or (datetime.now() - api_key.last_used_at).total_seconds() > 60
+                or (current - api_key.last_used_at).total_seconds() > 60
             ):
                 asyncio.create_task(_update_last_used(api_key.id))
             return user
