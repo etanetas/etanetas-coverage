@@ -598,3 +598,48 @@ async def test_update_zone_polygon_replace(client, editor_user, seed_zone):
     assert resp.status_code == 200
     detail = await client.get(f"/api/v1/admin/zones/{zone_id}/detail", headers={"X-API-Key": raw})
     assert detail.json()["has_polygon"] is True
+
+
+# ---------------------------------------------------------------------------
+# Soft-delete regression: deleted tech must not appear in public availability
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.integration
+async def test_soft_deleted_tech_excluded_from_availability(
+    client, admin_user, seed_address, seed_tech
+):
+    """A soft-deleted technology must not appear in the public availability response."""
+    _, raw = admin_user
+    _, tech = seed_tech
+
+    # Create an address offering for the tech
+    create_resp = await client.post(
+        f"/api/v1/admin/addresses/{seed_address}/offerings",
+        json={
+            "technology_id": str(tech.id),
+            "status": "available",
+            "max_download_mbps": 100,
+            "max_upload_mbps": 50,
+            "status_since": "2026-01-01",
+        },
+        headers={"X-API-Key": raw},
+    )
+    assert create_resp.status_code == 201
+
+    # Availability includes it
+    avail = await client.get(f"/api/v1/public/addresses/{seed_address}/availability")
+    assert avail.status_code == 200
+    assert len(avail.json().get("available", [])) >= 1
+
+    # Soft-delete the tech
+    del_resp = await client.delete(
+        f"/api/v1/admin/technologies/{tech.id}",
+        headers={"X-API-Key": raw},
+    )
+    assert del_resp.status_code == 204
+
+    # Availability now excludes the soft-deleted technology
+    avail = await client.get(f"/api/v1/public/addresses/{seed_address}/availability")
+    assert avail.status_code == 200
+    assert len(avail.json().get("available", [])) == 0

@@ -67,7 +67,7 @@ _AVAILABILITY_SQL = text("""
             zo.max_upload_mbps,
             zo.planned_until
         FROM zone_offerings zo
-        JOIN service_zones sz ON sz.id = zo.zone_id
+        JOIN service_zones sz ON sz.id = zo.zone_id AND sz.deleted_at IS NULL
         JOIN addr a ON ST_Contains(sz.polygon, a.point)
         WHERE zo.technology_id NOT IN (SELECT technology_id FROM addr_offerings)
         ORDER BY zo.technology_id, sz.priority DESC

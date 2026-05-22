@@ -113,6 +113,7 @@ async def get_coverage_stats(
               SELECT 1 FROM service_zones z
               JOIN zone_offerings zo ON zo.zone_id = z.id
               WHERE z.polygon IS NOT NULL
+                AND z.deleted_at IS NULL
                 AND ST_Contains(z.polygon::geometry, a.point::geometry)
                 AND zo.status IN ('available', 'planned')
             )
@@ -140,11 +141,15 @@ async def get_coverage_stats(
             address_params,
         ) or 0
 
-    zones_total = await db.scalar(text("SELECT COUNT(*) FROM service_zones")) or 0
+    zones_total = await db.scalar(text("SELECT COUNT(*) FROM service_zones WHERE deleted_at IS NULL")) or 0
     zones_with_polygon = await db.scalar(
-        text("SELECT COUNT(*) FROM service_zones WHERE polygon IS NOT NULL")
+        text("SELECT COUNT(*) FROM service_zones WHERE polygon IS NOT NULL AND deleted_at IS NULL")
     ) or 0
-    zone_offerings = await db.scalar(text("SELECT COUNT(*) FROM zone_offerings")) or 0
+    zone_offerings = await db.scalar(text("""
+        SELECT COUNT(*) FROM zone_offerings zo
+        JOIN service_zones z ON z.id = zo.zone_id
+        WHERE z.deleted_at IS NULL
+    """)) or 0
 
     if resolved_codes is None:
         status_rows = (
@@ -200,6 +205,7 @@ async def get_coverage_stats(
             SELECT 1 FROM service_zones z
             JOIN zone_offerings zo ON zo.zone_id = z.id
             WHERE z.polygon IS NOT NULL
+              AND z.deleted_at IS NULL
               AND ST_Contains(z.polygon::geometry, a.point::geometry)
               AND zo.status IN ('available', 'planned')
           )

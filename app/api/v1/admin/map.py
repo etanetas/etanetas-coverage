@@ -124,14 +124,15 @@ async def map_zones_geojson(
                                 'planned_until', zo.planned_until
                             ))
                             FROM zone_offerings zo
-                            JOIN technologies t ON t.id = zo.technology_id
-                            JOIN technology_types tt ON tt.id = t.type_id
+                            JOIN technologies t ON t.id = zo.technology_id AND t.deleted_at IS NULL
+                            JOIN technology_types tt ON tt.id = t.type_id AND tt.deleted_at IS NULL
                             WHERE zo.zone_id = z.id
                         )
                     )
                 ) AS feat
             FROM service_zones z
             WHERE z.polygon IS NOT NULL
+              AND z.deleted_at IS NULL
         ) t
     """)
 
