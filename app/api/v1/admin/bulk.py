@@ -10,6 +10,7 @@ from sqlalchemy import delete, select, text
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api.pagination import Page, PaginationParams, pagination_params
 from app.audit import log_action
 from app.auth import require_role
 from app.dependencies import get_db
@@ -243,28 +244,31 @@ async def bulk_rollback(
     await db.commit()
 
 
-@router.get("/bulk-operations", response_model=list[BulkOperationOut])
+@router.get("/bulk-operations", response_model=Page[BulkOperationOut])
 async def list_bulk_operations(
     current_user: Annotated[User, Depends(require_role("viewer", "editor", "admin"))],
     db: Annotated[AsyncSession, Depends(get_db)],
-) -> list[BulkOperationOut]:
-    rows = (
-        (
-            await db.execute(
-                text("""
-        SELECT bo.id, bo.user_id, u.username, bo.operation_type,
-               bo.affected_count, bo.created_at, bo.rolled_back_at
-        FROM bulk_operations bo
-        LEFT JOIN users u ON u.id = bo.user_id
-        ORDER BY bo.created_at DESC
-        LIMIT 200
-    """)
-            )
-        )
-        .mappings()
-        .all()
+    page: Annotated[PaginationParams, Depends(pagination_params)],
+) -> Page[BulkOperationOut]:
+    total = int(
+        (await db.execute(text("SELECT COUNT(*) FROM bulk_operations"))).scalar() or 0
     )
-    return [BulkOperationOut(**r) for r in rows]
+    rows = (
+        await db.execute(
+            text("""
+                SELECT bo.id, bo.user_id, u.username, bo.operation_type,
+                       bo.affected_count, bo.created_at, bo.rolled_back_at
+                FROM bulk_operations bo
+                LEFT JOIN users u ON u.id = bo.user_id
+                ORDER BY bo.created_at DESC
+                LIMIT :limit OFFSET :offset
+            """),
+            {"limit": page.limit, "offset": page.offset},
+        )
+    ).mappings().all()
+    return Page[BulkOperationOut](
+        total=total, items=[BulkOperationOut(**r) for r in rows]
+    )
 
 
 # ---------------------------------------------------------------------------

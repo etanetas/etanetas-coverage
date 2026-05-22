@@ -251,7 +251,7 @@ async def test_rollback_removes_offerings(client, editor_user, locality_code, te
             f"/api/v1/admin/addresses/{rc}/offerings",
             headers={"X-API-Key": raw},
         )
-        assert not any(o["technology_id"] == str(tech.id) for o in offerings.json())
+        assert not any(o["technology_id"] == str(tech.id) for o in offerings.json()["items"])
 
 
 @pytest.mark.integration
@@ -294,7 +294,7 @@ async def test_list_bulk_operations(client, editor_user, admin_user, locality_co
 
     resp = await client.get("/api/v1/admin/bulk-operations", headers={"X-API-Key": admin_raw})
     assert resp.status_code == 200
-    ops = resp.json()
+    ops = resp.json()["items"]
     assert any(o["operation_type"] == "add_offering" for o in ops)
 
 

@@ -5,9 +5,10 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
-from sqlalchemy import select, text
+from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api.pagination import Page, PaginationParams, pagination_params
 from app.audit import log_action
 from app.auth import require_role
 from app.dependencies import get_db
@@ -18,13 +19,31 @@ from app.schemas.admin import ZoneCreate, ZoneDetail, ZoneOfferingCreate, ZoneOf
 router = APIRouter(prefix="/api/v1/admin/zones", tags=["admin-zones"])
 
 
-@router.get("", response_model=list[ZoneOut])
+@router.get("", response_model=Page[ZoneOut])
 async def list_zones(
     current_user: Annotated[User, Depends(require_role("viewer", "editor", "admin"))],
     db: Annotated[AsyncSession, Depends(get_db)],
-) -> list[ZoneOut]:
-    # Fetch zones with aggressively simplified polygon for map rendering
-    rows = (await db.execute(text("""
+    page: Annotated[PaginationParams, Depends(pagination_params)],
+    q: Annotated[str | None, Query(description="substring match on zone name")] = None,
+    priority_min: Annotated[int | None, Query()] = None,
+) -> Page[ZoneOut]:
+    filters = []
+    params: dict = {}
+    if q:
+        filters.append("name ILIKE :q")
+        params["q"] = f"%{q}%"
+    if priority_min is not None:
+        filters.append("priority >= :priority_min")
+        params["priority_min"] = priority_min
+    where = ("WHERE " + " AND ".join(filters)) if filters else ""
+
+    total = int(
+        (await db.execute(text(f"SELECT COUNT(*) FROM service_zones {where}"), params)).scalar() or 0
+    )
+
+    params["limit"] = page.limit
+    params["offset"] = page.offset
+    rows = (await db.execute(text(f"""
         SELECT
             id, name, description, priority, created_at,
             polygon IS NOT NULL AS has_polygon,
@@ -33,9 +52,11 @@ async def list_zones(
                  ELSE NULL
             END AS polygon_geojson
         FROM service_zones
+        {where}
         ORDER BY priority DESC, name
-    """))).mappings().all()
-    return [ZoneOut(
+        LIMIT :limit OFFSET :offset
+    """), params)).mappings().all()
+    items = [ZoneOut(
         id=r["id"],
         name=r["name"],
         description=r["description"],
@@ -44,6 +65,7 @@ async def list_zones(
         polygon_geojson=r["polygon_geojson"],
         created_at=r["created_at"],
     ) for r in rows]
+    return Page[ZoneOut](total=total, items=items)
 
 
 @router.get("/{zone_id}/detail", response_model=ZoneDetail)
@@ -175,19 +197,33 @@ async def delete_zone(
     await db.commit()
 
 
-@router.get("/{zone_id}/offerings", response_model=list[ZoneOfferingOut])
+@router.get("/{zone_id}/offerings", response_model=Page[ZoneOfferingOut])
 async def list_zone_offerings(
     zone_id: uuid.UUID,
     current_user: Annotated[User, Depends(require_role("viewer", "editor", "admin"))],
     db: Annotated[AsyncSession, Depends(get_db)],
-) -> list[ZoneOffering]:
+    page: Annotated[PaginationParams, Depends(pagination_params)],
+) -> Page[ZoneOfferingOut]:
     await _require_zone(db, zone_id)
+    total = int(
+        (
+            await db.execute(
+                select(func.count())
+                .select_from(ZoneOffering)
+                .where(ZoneOffering.zone_id == zone_id)
+            )
+        ).scalar()
+        or 0
+    )
     result = await db.execute(
         select(ZoneOffering)
         .where(ZoneOffering.zone_id == zone_id)
         .order_by(ZoneOffering.created_at)
+        .limit(page.limit)
+        .offset(page.offset)
     )
-    return list(result.scalars().all())
+    items = [ZoneOfferingOut.model_validate(o) for o in result.scalars().all()]
+    return Page[ZoneOfferingOut](total=total, items=items)
 
 
 @router.post("/{zone_id}/offerings", response_model=ZoneOfferingOut, status_code=201)
@@ -259,19 +295,13 @@ class ZoneAddressItem(BaseModel):
     has_override: bool  # True if this address has its own address_offering
 
 
-class ZoneAddressesResponse(BaseModel):
-    total: int
-    items: list[ZoneAddressItem]
-
-
-@router.get("/{zone_id}/addresses", response_model=ZoneAddressesResponse)
+@router.get("/{zone_id}/addresses", response_model=Page[ZoneAddressItem])
 async def list_zone_addresses(
     zone_id: uuid.UUID,
     current_user: Annotated[User, Depends(require_role("viewer", "editor", "admin"))],
     db: Annotated[AsyncSession, Depends(get_db)],
-    limit: int = Query(50, ge=1, le=500),
-    offset: int = Query(0, ge=0),
-) -> ZoneAddressesResponse:
+    page: Annotated[PaginationParams, Depends(pagination_params)],
+) -> Page[ZoneAddressItem]:
     """List addresses (buildings) inside a zone's polygon. Paginated."""
     await _require_zone(db, zone_id)
 
@@ -299,9 +329,9 @@ async def list_zone_addresses(
           AND a.address_type = 'building'
         ORDER BY a.rc_code
         LIMIT :limit OFFSET :offset
-    """), {"zid": str(zone_id), "limit": limit, "offset": offset})).mappings().all()
+    """), {"zid": str(zone_id), "limit": page.limit, "offset": page.offset})).mappings().all()
 
-    return ZoneAddressesResponse(
+    return Page[ZoneAddressItem](
         total=total,
         items=[ZoneAddressItem(**r) for r in rows],
     )

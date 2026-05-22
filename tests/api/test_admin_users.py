@@ -59,7 +59,8 @@ async def test_list_users(client, admin):
     _, raw = admin
     resp = await client.get("/api/v1/admin/users", headers={"X-API-Key": raw})
     assert resp.status_code == 200
-    assert isinstance(resp.json(), list)
+    data = resp.json()
+    assert "total" in data and "items" in data
 
 
 @pytest.mark.integration
@@ -152,7 +153,8 @@ async def test_create_and_list_api_keys(client, admin, db_session):
         headers={"X-API-Key": raw},
     )
     assert list_resp.status_code == 200
-    assert len(list_resp.json()) == 1
+    assert list_resp.json()["total"] == 1
+    assert len(list_resp.json()["items"]) == 1
 
 
 @pytest.mark.integration

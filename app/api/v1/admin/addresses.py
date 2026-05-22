@@ -1,12 +1,13 @@
 import uuid
 from datetime import datetime
-from typing import Annotated
+from typing import Annotated, Literal
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
-from sqlalchemy import select, text
+from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api.pagination import Page, PaginationParams, pagination_params
 from app.audit import log_action
 from app.auth import require_role
 from app.dependencies import get_db
@@ -18,7 +19,6 @@ from app.schemas.admin import (
     AddressOfferingCreate,
     AddressOfferingOut,
     AddressOfferingUpdate,
-    AddressSearchRequest,
     AddressSearchResult,
     ZoneOfferingOut,
 )
@@ -28,30 +28,35 @@ from app.db.address_labels import _ADDR_JOINS, _FULL_ADDRESS, _HOUSE, _LOCALITY_
 router = APIRouter(prefix="/api/v1/admin/addresses", tags=["admin-addresses"])
 
 
-@router.post("/search", response_model=list[AddressSearchResult])
-async def search_addresses(
-    body: AddressSearchRequest,
+@router.get("", response_model=Page[AddressSearchResult])
+async def list_addresses(
     current_user: Annotated[User, Depends(require_role("viewer", "editor", "admin"))],
     db: Annotated[AsyncSession, Depends(get_db)],
-) -> list[AddressSearchResult]:
-    if len(body.q) < 2:
-        return []
+    page: Annotated[PaginationParams, Depends(pagination_params)],
+    q: Annotated[str | None, Query(description="fuzzy match on street/locality/full address (min 2 chars)")] = None,
+    locality_code: Annotated[int | None, Query()] = None,
+    street_code: Annotated[int | None, Query()] = None,
+    address_type: Annotated[Literal["building", "premises"] | None, Query()] = None,
+    has_point: Annotated[bool, Query()] = False,
+    has_offering: Annotated[bool, Query()] = False,
+) -> Page[AddressSearchResult]:
+    use_fuzzy = q is not None and len(q) >= 2
 
     filters = ["a.deleted_at IS NULL"]
-    params: dict = {"q": body.q, "limit": body.limit}
+    params: dict = {}
 
-    if body.address_type:
+    if address_type:
         filters.append("a.address_type = :address_type")
-        params["address_type"] = body.address_type
-    if body.locality_code:
+        params["address_type"] = address_type
+    if locality_code:
         filters.append("a.locality_code = :locality_code")
-        params["locality_code"] = body.locality_code
-    if body.street_code:
+        params["locality_code"] = locality_code
+    if street_code:
         filters.append("a.street_code = :street_code")
-        params["street_code"] = body.street_code
-    if body.has_point:
+        params["street_code"] = street_code
+    if has_point:
         filters.append("a.point IS NOT NULL")
-    if body.has_offering:
+    if has_offering:
         filters.append(
             "("
             "EXISTS (SELECT 1 FROM address_offerings ao WHERE ao.address_code = a.rc_code)"
@@ -64,7 +69,31 @@ async def search_addresses(
             ")"
         )
 
+    if use_fuzzy:
+        params["q"] = q
+        filters.append(
+            "("
+            "s.full_name % :q"
+            " OR l.name % :q"
+            " OR l.name_k % :q"
+            f" OR (COALESCE(({_STREET_WITH_TYPE}) || ' ', '') || a.house_no || ', ' || l.name) % :q"
+            ")"
+        )
+        order_by = "similarity(COALESCE(s.full_name, l.name) || ' ' || a.house_no, :q) DESC"
+    else:
+        order_by = "a.rc_code"
+
     where = " AND ".join(filters)
+
+    count_sql = text(f"""
+        SELECT COUNT(*) FROM addresses a
+        {_ADDR_JOINS}
+        WHERE {where}
+    """)
+    total = int((await db.execute(count_sql, params)).scalar() or 0)
+
+    params["limit"] = page.limit
+    params["offset"] = page.offset
     sql = text(f"""
         SELECT
             a.rc_code,
@@ -74,17 +103,14 @@ async def search_addresses(
         FROM addresses a
         {_ADDR_JOINS}
         WHERE {where}
-          AND (
-              s.full_name % :q
-              OR l.name % :q
-              OR l.name_k % :q
-              OR (COALESCE(({_STREET_WITH_TYPE}) || ' ', '') || a.house_no || ', ' || l.name) % :q
-          )
-        ORDER BY similarity(COALESCE(s.full_name, l.name) || ' ' || a.house_no, :q) DESC
-        LIMIT :limit
+        ORDER BY {order_by}
+        LIMIT :limit OFFSET :offset
     """)
     rows = (await db.execute(sql, params)).mappings().all()
-    return [AddressSearchResult(**r) for r in rows]
+    return Page[AddressSearchResult](
+        total=total,
+        items=[AddressSearchResult(**r) for r in rows],
+    )
 
 
 @router.get("/{rc_code}", response_model=AddressDetail)
@@ -191,23 +217,37 @@ async def get_address_zone_coverage(
     return list(by_zone.values())
 
 
-@router.get("/{rc_code}/offerings", response_model=list[AddressOfferingOut])
+@router.get("/{rc_code}/offerings", response_model=Page[AddressOfferingOut])
 async def list_address_offerings(
     rc_code: int,
     current_user: Annotated[User, Depends(require_role("viewer", "editor", "admin"))],
     db: Annotated[AsyncSession, Depends(get_db)],
-) -> list[AddressOffering]:
+    page: Annotated[PaginationParams, Depends(pagination_params)],
+) -> Page[AddressOfferingOut]:
     addr = await db.execute(
         select(Address.rc_code).where(Address.rc_code == rc_code, Address.deleted_at.is_(None))
     )
     if addr.scalar_one_or_none() is None:
         raise HTTPException(status_code=404, detail="Address not found")
+    total = int(
+        (
+            await db.execute(
+                select(func.count())
+                .select_from(AddressOffering)
+                .where(AddressOffering.address_code == rc_code)
+            )
+        ).scalar()
+        or 0
+    )
     result = await db.execute(
         select(AddressOffering)
         .where(AddressOffering.address_code == rc_code)
         .order_by(AddressOffering.created_at)
+        .limit(page.limit)
+        .offset(page.offset)
     )
-    return list(result.scalars().all())
+    items = [AddressOfferingOut.model_validate(o) for o in result.scalars().all()]
+    return Page[AddressOfferingOut](total=total, items=items)
 
 
 @router.post("/{rc_code}/offerings", response_model=AddressOfferingOut, status_code=201)

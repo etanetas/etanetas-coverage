@@ -4,10 +4,11 @@ import uuid
 from datetime import datetime
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import select
+from fastapi import APIRouter, Depends, HTTPException, Query
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api.pagination import Page, PaginationParams, pagination_params
 from app.audit import log_action
 from app.auth import get_current_user, require_role
 from app.config import settings
@@ -25,13 +26,33 @@ async def get_me(
     return current_user
 
 
-@router.get("/users", response_model=list[UserOut])
+@router.get("/users", response_model=Page[UserOut])
 async def list_users(
     current_user: Annotated[User, Depends(require_role("admin"))],
     db: Annotated[AsyncSession, Depends(get_db)],
-) -> list[User]:
-    result = await db.execute(select(User).order_by(User.created_at))
-    return list(result.scalars().all())
+    page: Annotated[PaginationParams, Depends(pagination_params)],
+    q: Annotated[str | None, Query(description="substring on username/email")] = None,
+    role: Annotated[str | None, Query()] = None,
+    active: Annotated[bool | None, Query()] = None,
+) -> Page[UserOut]:
+    stmt = select(User)
+    count_stmt = select(func.count()).select_from(User)
+    if q:
+        like = f"%{q}%"
+        cond = or_(User.username.ilike(like), User.email.ilike(like))
+        stmt = stmt.where(cond)
+        count_stmt = count_stmt.where(cond)
+    if role:
+        stmt = stmt.where(User.role == role)
+        count_stmt = count_stmt.where(User.role == role)
+    if active is not None:
+        stmt = stmt.where(User.active.is_(active))
+        count_stmt = count_stmt.where(User.active.is_(active))
+
+    total = int((await db.execute(count_stmt)).scalar() or 0)
+    result = await db.execute(stmt.order_by(User.created_at).limit(page.limit).offset(page.offset))
+    items = [UserOut.model_validate(u) for u in result.scalars().all()]
+    return Page[UserOut](total=total, items=items)
 
 
 @router.post("/users", response_model=UserOut, status_code=201)
@@ -103,17 +124,25 @@ async def delete_user(
     await db.commit()
 
 
-@router.get("/users/{user_id}/api-keys", response_model=list[ApiKeyOut])
+@router.get("/users/{user_id}/api-keys", response_model=Page[ApiKeyOut])
 async def list_api_keys(
     user_id: uuid.UUID,
     current_user: Annotated[User, Depends(require_role("admin"))],
     db: Annotated[AsyncSession, Depends(get_db)],
-) -> list[ApiKey]:
+    page: Annotated[PaginationParams, Depends(pagination_params)],
+    active_only: Annotated[bool, Query(description="exclude revoked keys")] = False,
+) -> Page[ApiKeyOut]:
     await _require_user(db, user_id)
-    result = await db.execute(
-        select(ApiKey).where(ApiKey.user_id == user_id).order_by(ApiKey.created_at)
-    )
-    return list(result.scalars().all())
+    stmt = select(ApiKey).where(ApiKey.user_id == user_id)
+    count_stmt = select(func.count()).select_from(ApiKey).where(ApiKey.user_id == user_id)
+    if active_only:
+        stmt = stmt.where(ApiKey.revoked_at.is_(None))
+        count_stmt = count_stmt.where(ApiKey.revoked_at.is_(None))
+
+    total = int((await db.execute(count_stmt)).scalar() or 0)
+    result = await db.execute(stmt.order_by(ApiKey.created_at).limit(page.limit).offset(page.offset))
+    items = [ApiKeyOut.model_validate(k) for k in result.scalars().all()]
+    return Page[ApiKeyOut](total=total, items=items)
 
 
 @router.post("/users/{user_id}/api-keys", response_model=ApiKeyCreated, status_code=201)

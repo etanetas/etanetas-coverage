@@ -58,16 +58,6 @@ class ApiKeyCreated(ApiKeyOut):
 # ---------------------------------------------------------------------------
 
 
-class AddressSearchRequest(BaseModel):
-    q: str
-    locality_code: int | None = None
-    street_code: int | None = None
-    address_type: Literal["building", "premises"] | None = None
-    has_point: bool = False
-    has_offering: bool = False
-    limit: Annotated[int, Field(ge=1, le=100)] = 20
-
-
 class AddressSearchResult(BaseModel):
     rc_code: int
     full_address: str
