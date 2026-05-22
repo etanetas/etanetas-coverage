@@ -1,12 +1,13 @@
+import asyncio
 import logging
 
 from fastapi import FastAPI
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
 from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 from sqlalchemy import text
+from sqlalchemy.exc import SQLAlchemyError
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from app.api.v1.admin.addresses import router as admin_addresses_router
@@ -23,6 +24,7 @@ from app.config import settings
 from app.database import AsyncSessionLocal, engine
 from app.errors import (
     http_exception_handler,
+    raise_error,
     unhandled_exception_handler,
     validation_exception_handler,
 )
@@ -68,12 +70,20 @@ app.include_router(admin_hierarchy_router)
 app.include_router(admin_stats_router)
 
 
-@app.get("/health")
-async def health():
+async def _db_ping() -> None:
+    """Tiny DB round-trip; isolated so tests can monkeypatch."""
+    async with AsyncSessionLocal() as session:
+        await session.execute(text("SELECT 1"))
+
+
+@app.get("/health", tags=["health"], summary="Liveness + DB readiness probe")
+async def health() -> dict:
     try:
-        async with AsyncSessionLocal() as session:
-            await session.execute(text("SELECT 1"))
-        return {"status": "ok", "db": "ok"}
-    except Exception:
-        log.exception("Health check DB error")
-        return JSONResponse(status_code=503, content={"status": "degraded", "db": "unhealthy"})
+        await _db_ping()
+    except SQLAlchemyError as exc:
+        log.warning("DB health check failed: %s", exc)
+        raise_error(503, "SERVICE_UNAVAILABLE", "Database unavailable")
+    except asyncio.TimeoutError:
+        log.warning("DB health check timed out")
+        raise_error(503, "SERVICE_UNAVAILABLE", "Database health check timed out")
+    return {"status": "ok", "db": "up"}
