@@ -314,7 +314,11 @@ async def update_address_offering(
     return offering
 
 
-@router.delete("/offerings/{offering_id}", status_code=204)
+@router.delete(
+    "/offerings/{offering_id}",
+    status_code=204,
+    summary="Delete an address-level offering. Editor+ can use this for quick correction.",
+)
 async def delete_address_offering(
     offering_id: uuid.UUID,
     current_user: Annotated[User, Depends(require_role("editor", "admin"))],

@@ -128,7 +128,28 @@ async def test_delete_user_deactivates(client, admin, db_session):
 async def test_delete_own_account_forbidden(client, admin):
     admin_user, raw = admin
     resp = await client.delete(f"/api/v1/admin/users/{admin_user.id}", headers={"X-API-Key": raw})
-    assert resp.status_code == 400
+    assert resp.status_code == 409
+    assert resp.json()["error"]["code"] == "SELF_DEACTIVATE_FORBIDDEN"
+
+
+@pytest.mark.integration
+async def test_lms_lookup_forbidden_for_viewer(client, viewer, db_session):
+    from app.models.admin import User
+    target = User(
+        username=f"lms-target-{secrets.token_hex(4)}",
+        email=f"lms-{secrets.token_hex(4)}@example.com",
+        role="viewer",
+        active=True,
+        lms_username="lms-target",
+    )
+    db_session.add(target)
+    await db_session.flush()
+    _, raw = viewer
+    resp = await client.get(
+        "/api/v1/admin/users/by-lms-username/lms-target",
+        headers={"X-API-Key": raw},
+    )
+    assert resp.status_code == 403
 
 
 @pytest.mark.integration

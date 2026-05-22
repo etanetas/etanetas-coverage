@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.auth import get_current_user
 from app.config import settings
 from app.dependencies import get_db
+from app.errors import raise_error
 from app.models.admin import User
 from app.schemas.admin import CoverageStats, StatusBreakdown, UncoveredLocality
 
@@ -49,10 +50,7 @@ async def _resolve_muni_codes(
     if not rows:
         if muni_codes:
             raise HTTPException(status_code=400, detail="No municipalities found for the given codes")
-        raise HTTPException(
-            status_code=500,
-            detail="Operational area not configured — no matching municipalities found",
-        )
+        raise_error(503, "SERVICE_UNAVAILABLE", "Operational area not configured")
     names = [str(row["name"]) for row in rows]
     codes = [int(row["rc_code"]) for row in rows]
     label = "Selected municipalities" if muni_codes else "Operational area"

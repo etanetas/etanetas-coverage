@@ -12,6 +12,7 @@ from app.audit import log_action
 from app.auth import get_current_user, require_role
 from app.config import settings
 from app.dependencies import get_db
+from app.errors import raise_error
 from app.models.admin import ApiKey, User
 from app.schemas.admin import ApiKeyCreate, ApiKeyCreated, ApiKeyOut, UserCreate, UserOut, UserUpdate
 from app.time import now
@@ -107,7 +108,7 @@ async def delete_user(
     db: Annotated[AsyncSession, Depends(get_db)],
 ) -> None:
     if user_id == current_user.id:
-        raise HTTPException(status_code=400, detail="Cannot deactivate your own account")
+        raise_error(409, "SELF_DEACTIVATE_FORBIDDEN", "Cannot deactivate your own account")
 
     user = await _require_user(db, user_id)
     user.active = False
@@ -203,7 +204,7 @@ async def revoke_api_key(
 @router.get("/users/by-lms-username/{lms_username}", response_model=UserOut)
 async def get_user_by_lms_username(
     lms_username: str,
-    current_user: Annotated[User, Depends(get_current_user)],
+    current_user: Annotated[User, Depends(require_role("admin"))],
     db: Annotated[AsyncSession, Depends(get_db)],
 ) -> User:
     """Look up a user by their LMS username — used by the LMS plugin to resolve sessions."""
