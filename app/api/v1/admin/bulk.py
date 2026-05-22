@@ -14,6 +14,7 @@ from app.api.pagination import Page, PaginationParams, pagination_params
 from app.audit import log_action
 from app.auth import require_role
 from app.dependencies import get_db
+from app.errors import raise_error
 from app.limiter import limiter
 from app.models.address import Address
 from app.models.admin import BulkOperations, BulkPreviewToken, User
@@ -39,6 +40,7 @@ from app.schemas.admin import (
 router = APIRouter(prefix="/api/v1/admin", tags=["admin-bulk"])
 
 _EDITOR_RATE_LIMIT = 5000  # addresses per minute per editor
+_MAX_BULK_AFFECTED = 10_000
 
 
 @router.post("/bulk/preview", response_model=BulkPreviewResponse)
@@ -279,7 +281,8 @@ async def list_bulk_operations(
 # ---------------------------------------------------------------------------
 
 
-async def _filter_addresses(db: AsyncSession, f: BulkFilter) -> list[int]:
+def _build_filter_where(f: BulkFilter) -> tuple[str, dict]:
+    """Return (where_clause_string, params_dict) for a BulkFilter."""
     filters = ["a.deleted_at IS NULL", "a.address_type = 'building'"]
     params: dict = {}
 
@@ -296,11 +299,33 @@ async def _filter_addresses(db: AsyncSession, f: BulkFilter) -> list[int]:
         filters.append("a.house_no ILIKE :house_no_pattern")
         params["house_no_pattern"] = f.house_no_pattern
 
-    sql = text(
-        f"SELECT a.rc_code FROM addresses a WHERE {' AND '.join(filters)} ORDER BY a.rc_code LIMIT 10000"
+    return " AND ".join(filters), params
+
+
+async def _filter_addresses(db: AsyncSession, f: BulkFilter) -> list[int]:
+    where_sql, params = _build_filter_where(f)
+
+    count = int(
+        (
+            await db.execute(
+                text(f"SELECT COUNT(*) FROM addresses a WHERE {where_sql}"),
+                params,
+            )
+        ).scalar()
+        or 0
     )
-    result = await db.execute(sql, params)
-    return [row[0] for row in result.fetchall()]
+    if count > _MAX_BULK_AFFECTED:
+        raise_error(
+            422,
+            "BULK_LIMIT_EXCEEDED",
+            f"Filter matches {count} addresses (max {_MAX_BULK_AFFECTED}). Narrow your filter.",
+        )
+
+    rows = await db.execute(
+        text(f"SELECT a.rc_code FROM addresses a WHERE {where_sql} ORDER BY a.rc_code"),
+        params,
+    )
+    return [row[0] for row in rows.all()]
 
 
 async def _build_sample(
