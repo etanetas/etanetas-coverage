@@ -1,7 +1,7 @@
 from app.models.base import Base
 
 import uuid
-from sqlalchemy import BigInteger, Text, Integer, Date, TIMESTAMP, ForeignKey, UniqueConstraint, Index, CheckConstraint
+from sqlalchemy import BigInteger, DateTime, Text, Integer, Date, TIMESTAMP, ForeignKey, UniqueConstraint, Index, CheckConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 from geoalchemy2 import Geometry
 from datetime import datetime, date
@@ -18,6 +18,7 @@ class ServiceZone(Base):
     created_at: Mapped[datetime] = mapped_column(TIMESTAMP, default=datetime.now)
     updated_at: Mapped[datetime | None] = mapped_column(TIMESTAMP, onupdate=datetime.now)
     created_by: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id"))
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
 
 class ZoneOffering(Base):

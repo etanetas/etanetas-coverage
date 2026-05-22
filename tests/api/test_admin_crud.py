@@ -389,6 +389,35 @@ async def test_delete_zone(client, admin_user, seed_zone):
 
 
 @pytest.mark.integration
+async def test_delete_zone_soft_excludes_from_list(client, admin_user, seed_zone):
+    _, raw = admin_user
+    zone_id, _ = seed_zone
+    del_resp = await client.delete(f"/api/v1/admin/zones/{zone_id}", headers={"X-API-Key": raw})
+    assert del_resp.status_code == 204
+    list_resp = await client.get("/api/v1/admin/zones", headers={"X-API-Key": raw})
+    assert list_resp.status_code == 200
+    assert not any(z["id"] == str(zone_id) for z in list_resp.json()["items"])
+
+
+@pytest.mark.integration
+async def test_delete_zone_soft_returns_404_on_detail(client, admin_user, seed_zone):
+    _, raw = admin_user
+    zone_id, _ = seed_zone
+    await client.delete(f"/api/v1/admin/zones/{zone_id}", headers={"X-API-Key": raw})
+    detail_resp = await client.get(f"/api/v1/admin/zones/{zone_id}/detail", headers={"X-API-Key": raw})
+    assert detail_resp.status_code == 404
+
+
+@pytest.mark.integration
+async def test_delete_zone_soft_cannot_delete_twice(client, admin_user, seed_zone):
+    _, raw = admin_user
+    zone_id, _ = seed_zone
+    await client.delete(f"/api/v1/admin/zones/{zone_id}", headers={"X-API-Key": raw})
+    second_resp = await client.delete(f"/api/v1/admin/zones/{zone_id}", headers={"X-API-Key": raw})
+    assert second_resp.status_code == 404
+
+
+@pytest.mark.integration
 async def test_create_and_list_zone_offering(client, editor_user, seed_zone, seed_tech):
     _, raw = editor_user
     zone_id, _ = seed_zone
