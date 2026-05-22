@@ -101,7 +101,7 @@ async def test_update_user(client, admin, db_session):
     db_session.add(other)
     await db_session.flush()
 
-    resp = await client.put(
+    resp = await client.patch(
         f"/api/v1/admin/users/{other.id}",
         json={"role": "editor"},
         headers={"X-API-Key": raw},

@@ -75,7 +75,7 @@ async def create_user(
     return user
 
 
-@router.put("/users/{user_id}", response_model=UserOut)
+@router.patch("/users/{user_id}", response_model=UserOut)
 async def update_user(
     user_id: uuid.UUID,
     body: UserUpdate,

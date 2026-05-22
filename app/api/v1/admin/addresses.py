@@ -286,7 +286,7 @@ async def create_address_offering(
     return offering
 
 
-@router.put("/offerings/{offering_id}", response_model=AddressOfferingOut)
+@router.patch("/offerings/{offering_id}", response_model=AddressOfferingOut)
 async def update_address_offering(
     offering_id: uuid.UUID,
     body: AddressOfferingUpdate,

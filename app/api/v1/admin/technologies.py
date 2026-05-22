@@ -44,7 +44,7 @@ async def list_technology_types(
     return Page[TechnologyTypeOut](total=total, items=items)
 
 
-@router.put("/technology-types/{type_id}", response_model=TechnologyTypeOut)
+@router.patch("/technology-types/{type_id}", response_model=TechnologyTypeOut)
 async def update_technology_type(
     type_id: uuid.UUID,
     body: TechnologyTypeUpdate,
@@ -110,7 +110,7 @@ async def create_technology(
     return tech
 
 
-@router.put("/technologies/{tech_id}", response_model=TechnologyOut)
+@router.patch("/technologies/{tech_id}", response_model=TechnologyOut)
 async def update_technology(
     tech_id: uuid.UUID,
     body: TechnologyUpdate,

@@ -147,7 +147,7 @@ async def create_zone(
     )
 
 
-@router.put("/{zone_id}", response_model=ZoneOut)
+@router.patch("/{zone_id}", response_model=ZoneOut)
 async def update_zone(
     zone_id: uuid.UUID,
     body: ZoneUpdate,
@@ -254,7 +254,7 @@ async def create_zone_offering(
     return offering
 
 
-@router.put("/offerings/{offering_id}", response_model=ZoneOfferingOut)
+@router.patch("/offerings/{offering_id}", response_model=ZoneOfferingOut)
 async def update_zone_offering(
     offering_id: uuid.UUID,
     body: ZoneOfferingUpdate,
