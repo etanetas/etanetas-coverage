@@ -341,3 +341,41 @@ async def test_list_bulk_operations_viewer_allowed(client, viewer_user):
     _, raw = viewer_user
     resp = await client.get("/api/v1/admin/bulk-operations", headers={"X-API-Key": raw})
     assert resp.status_code == 200
+
+
+@pytest.mark.integration
+async def test_bulk_preview_rejects_unscoped(client, editor_user, tech):
+    """Filter with only house_no_pattern (no rc_codes, no locality_code) must be rejected."""
+    _, raw = editor_user
+    payload = {
+        "operation": _op(tech.id),
+        "filter": {"house_no_pattern": "%1%"},
+    }
+    resp = await client.post(
+        "/api/v1/admin/bulk/preview",
+        json=payload,
+        headers={"X-API-Key": raw},
+    )
+    assert resp.status_code == 422
+
+
+@pytest.mark.integration
+async def test_bulk_preview_rejects_over_cap(client, editor_user, locality_code, tech, monkeypatch):
+    """When match count exceeds the cap, return 422 with BULK_LIMIT_EXCEEDED."""
+    from app.api.v1.admin import bulk as bulk_mod
+
+    # locality_code fixture inserts 3 addresses; cap of 2 forces rejection (3 > 2)
+    monkeypatch.setattr(bulk_mod, "_MAX_BULK_AFFECTED", 2)
+
+    _, raw = editor_user
+    payload = {
+        "operation": _op(tech.id),
+        "filter": {"locality_code": locality_code},
+    }
+    resp = await client.post(
+        "/api/v1/admin/bulk/preview",
+        json=payload,
+        headers={"X-API-Key": raw},
+    )
+    assert resp.status_code == 422
+    assert resp.json()["error"]["code"] == "BULK_LIMIT_EXCEEDED"
