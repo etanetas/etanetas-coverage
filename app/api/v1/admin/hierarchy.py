@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.pagination import Page, PaginationParams, pagination_params
 from app.auth import get_current_user
+from app.db.filter_builder import build_where
 from app.dependencies import get_db
 from app.models.admin import User
 
@@ -73,7 +74,7 @@ async def _paginated(
     return total, list(rows)
 
 
-@router.get("/counties", response_model=Page[CountyOut])
+@router.get("/counties", response_model=Page[CountyOut], summary="List counties", operation_id="admin.hierarchy.counties.list")
 async def list_counties(
     current_user: Annotated[User, Depends(get_current_user)],
     db: Annotated[AsyncSession, Depends(get_db)],
@@ -83,7 +84,7 @@ async def list_counties(
     return Page[CountyOut](total=total, items=[CountyOut(**r) for r in rows])
 
 
-@router.get("/municipalities", response_model=Page[MunicipalityOut])
+@router.get("/municipalities", response_model=Page[MunicipalityOut], summary="List municipalities", operation_id="admin.hierarchy.municipalities.list")
 async def list_municipalities(
     current_user: Annotated[User, Depends(get_current_user)],
     db: Annotated[AsyncSession, Depends(get_db)],
@@ -96,7 +97,7 @@ async def list_municipalities(
     return Page[MunicipalityOut](total=total, items=[MunicipalityOut(**r) for r in rows])
 
 
-@router.get("/localities", response_model=Page[LocalityOut])
+@router.get("/localities", response_model=Page[LocalityOut], summary="List localities", operation_id="admin.hierarchy.localities.list")
 async def list_localities(
     current_user: Annotated[User, Depends(get_current_user)],
     db: Annotated[AsyncSession, Depends(get_db)],
@@ -104,20 +105,15 @@ async def list_localities(
     muni_code: int | None = Query(None),
     q: str | None = Query(None, description="autocomplete prefix/substring"),
 ) -> Page[LocalityOut]:
-    filters = []
-    params: dict = {}
-    if muni_code is not None:
-        filters.append("muni_code = :muni_code")
-        params["muni_code"] = muni_code
-    if q:
-        filters.append("(name ILIKE :q OR name_k ILIKE :q)")
-        params["q"] = f"%{q}%"
-    where = ("WHERE " + " AND ".join(filters)) if filters else ""
+    where, params = build_where([
+        ("muni_code = :muni_code", {"muni_code": muni_code}) if muni_code is not None else None,
+        ("(name ILIKE :q OR name_k ILIKE :q)", {"q": f"%{q}%"}) if q else None,
+    ])
     total, rows = await _paginated(db, "localities", where, "name", params, page)
     return Page[LocalityOut](total=total, items=[LocalityOut(**r) for r in rows])
 
 
-@router.get("/streets", response_model=Page[StreetOut])
+@router.get("/streets", response_model=Page[StreetOut], summary="List streets", operation_id="admin.hierarchy.streets.list")
 async def list_streets(
     current_user: Annotated[User, Depends(get_current_user)],
     db: Annotated[AsyncSession, Depends(get_db)],
@@ -125,14 +121,9 @@ async def list_streets(
     locality_code: int | None = Query(None),
     q: str | None = Query(None, description="autocomplete prefix/substring"),
 ) -> Page[StreetOut]:
-    filters = []
-    params: dict = {}
-    if locality_code is not None:
-        filters.append("locality_code = :locality_code")
-        params["locality_code"] = locality_code
-    if q:
-        filters.append("(name ILIKE :q OR full_name ILIKE :q)")
-        params["q"] = f"%{q}%"
-    where = ("WHERE " + " AND ".join(filters)) if filters else ""
+    where, params = build_where([
+        ("locality_code = :locality_code", {"locality_code": locality_code}) if locality_code is not None else None,
+        ("(name ILIKE :q OR full_name ILIKE :q)", {"q": f"%{q}%"}) if q else None,
+    ])
     total, rows = await _paginated(db, "streets", where, "name", params, page)
     return Page[StreetOut](total=total, items=[StreetOut(**r) for r in rows])

@@ -25,7 +25,7 @@ def create_admin(
         asyncio.run(_create_admin(username, email))
     except Exception as e:
         rprint(f"[red]ERROR: {type(e).__name__}: {e}[/red]", file=sys.stderr)
-        raise typer.Exit(code=1)
+        raise typer.Exit(code=1) from None
 
 
 @app.command("create-key")
@@ -38,7 +38,7 @@ def create_key(
         asyncio.run(_create_key(username, name))
     except Exception as e:
         rprint(f"[red]ERROR: {type(e).__name__}: {e}[/red]", file=sys.stderr)
-        raise typer.Exit(code=1)
+        raise typer.Exit(code=1) from None
 
 
 @app.command("revoke-key")
@@ -50,7 +50,7 @@ def revoke_key(
         asyncio.run(_revoke_key(username))
     except Exception as e:
         rprint(f"[red]ERROR: {type(e).__name__}: {e}[/red]", file=sys.stderr)
-        raise typer.Exit(code=1)
+        raise typer.Exit(code=1) from None
 
 
 @app.command("list-users")
@@ -60,7 +60,7 @@ def list_users():
         asyncio.run(_list_users())
     except Exception as e:
         rprint(f"[red]ERROR: {type(e).__name__}: {e}[/red]", file=sys.stderr)
-        raise typer.Exit(code=1)
+        raise typer.Exit(code=1) from None
 
 
 @app.command("version")
@@ -75,7 +75,7 @@ async def _create_admin(username: str, email: str) -> None:
 
         if existing is not None:
             rprint(f"[red]User '{username}' already exists.[/red]", file=sys.stderr)
-            raise typer.Exit(code=1)
+            raise typer.Exit(code=1) from None
 
         user = User(username=username, email=email, role="admin", active=True)
         session.add(user)
@@ -145,7 +145,7 @@ async def _require_user(session, username: str) -> User:
     user = result.scalar_one_or_none()
     if user is None:
         rprint(f"[red]User '{username}' not found.[/red]", file=sys.stderr)
-        raise typer.Exit(code=1)
+        raise typer.Exit(code=1) from None
     return user
 
 

@@ -2,7 +2,7 @@ import uuid
 from datetime import date, datetime
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, EmailStr, Field, model_validator
+from pydantic import BaseModel, ConfigDict, EmailStr, Field, model_validator
 
 
 class PolygonGeoJSON(BaseModel):
@@ -23,7 +23,20 @@ class UserOut(BaseModel):
     lms_username: str | None
     created_at: datetime
 
-    model_config = {"from_attributes": True}
+    model_config = ConfigDict(
+        from_attributes=True,
+        json_schema_extra={
+            "example": {
+                "id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+                "username": "jdoe",
+                "email": "jdoe@etanetas.lt",
+                "role": "editor",
+                "active": True,
+                "lms_username": "jdoe_lms",
+                "created_at": "2025-01-15T10:30:00Z",
+            }
+        },
+    )
 
 
 class UserCreate(BaseModel):
@@ -68,6 +81,17 @@ class AddressSearchResult(BaseModel):
     full_address: str
     postal_code: str | None
     address_type: str
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "rc_code": 12345678,
+                "full_address": "Vilniaus g. 5, Šalčininkai",
+                "postal_code": "17101",
+                "address_type": "building",
+            }
+        },
+    )
 
 
 class AddressDetail(BaseModel):
@@ -162,7 +186,20 @@ class ZoneOut(BaseModel):
     polygon_geojson: dict | None  # simplified GeoJSON for map rendering (may be None)
     created_at: datetime
 
-    model_config = {"from_attributes": True}
+    model_config = ConfigDict(
+        from_attributes=True,
+        json_schema_extra={
+            "example": {
+                "id": "b2c3d4e5-f6a7-8901-bcde-f12345678901",
+                "name": "Šalčininkai miestas",
+                "description": "Šalčininkai city coverage zone",
+                "priority": 100,
+                "has_polygon": True,
+                "polygon_geojson": None,
+                "created_at": "2025-01-10T08:00:00Z",
+            }
+        },
+    )
 
 
 class ZoneDetail(ZoneOut):
@@ -317,6 +354,23 @@ class BulkPreviewResponse(BaseModel):
     preview_token: str | None
     expires_at: datetime | None = None
 
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "affected_count": 42,
+                "sample": [
+                    {
+                        "address": "Vilniaus g. 5, Šalčininkai",
+                        "current": None,
+                        "new": {"status": "available", "max_dl_mbps": 100, "max_ul_mbps": 50},
+                    }
+                ],
+                "preview_token": "tmp_abc123def456",
+                "expires_at": "2025-01-15T10:35:00Z",
+            }
+        },
+    )
+
 
 class BulkExecuteRequest(BaseModel):
     preview_token: str
@@ -348,7 +402,7 @@ class BulkRollbackResponse(BaseModel):
 
 
 class AuditLogOut(BaseModel):
-    id: int
+    id: int  # internal serial — treat as opaque; do not rely on ordering
     user_id: uuid.UUID | None
     username: str | None
     entity_type: str

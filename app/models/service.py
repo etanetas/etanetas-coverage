@@ -1,10 +1,22 @@
-from app.models.base import Base
-
 import uuid
-from sqlalchemy import BigInteger, DateTime, Text, Integer, Date, TIMESTAMP, ForeignKey, UniqueConstraint, Index, CheckConstraint
-from sqlalchemy.orm import Mapped, mapped_column
+from datetime import date, datetime
+
 from geoalchemy2 import Geometry
-from datetime import datetime, date
+from sqlalchemy import (
+    TIMESTAMP,
+    BigInteger,
+    CheckConstraint,
+    Date,
+    DateTime,
+    ForeignKey,
+    Index,
+    Integer,
+    Text,
+    UniqueConstraint,
+)
+from sqlalchemy.orm import Mapped, mapped_column
+
+from app.models.base import Base
 
 
 class ServiceZone(Base):

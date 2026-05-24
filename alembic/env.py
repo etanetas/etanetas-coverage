@@ -1,9 +1,9 @@
 import asyncio
 import os
 
-import geoalchemy2  # noqa: F401 — registers PostGIS geometry types with SQLAlchemy
-from geoalchemy2 import alembic_helpers
+import geoalchemy2
 from dotenv import load_dotenv
+from geoalchemy2 import alembic_helpers
 from sqlalchemy.ext.asyncio import create_async_engine
 
 from alembic import context

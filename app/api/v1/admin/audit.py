@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.pagination import Page, PaginationParams, pagination_params
 from app.auth import require_role
+from app.db.filter_builder import build_where
 from app.dependencies import get_db
 from app.models.admin import User
 from app.schemas.admin import AuditLogOut
@@ -29,7 +30,7 @@ _AUDIT_SELECT = """
 """
 
 
-@router.get("/audit-log", response_model=Page[AuditLogOut])
+@router.get("/audit-log", response_model=Page[AuditLogOut], summary="Query audit log", operation_id="admin.audit-log.list")
 async def get_audit_log(
     current_user: Annotated[User, Depends(require_role("admin"))],
     db: Annotated[AsyncSession, Depends(get_db)],
@@ -43,26 +44,14 @@ async def get_audit_log(
     if since and until and since >= until:
         from app.errors import raise_error
         raise_error(422, "VALIDATION_ERROR", "`since` must be before `until`")
-    filters = []
-    params: dict = {}
 
-    if entity_type:
-        filters.append("al.entity_type = :entity_type")
-        params["entity_type"] = entity_type
-    if entity_id:
-        filters.append("al.entity_id = :entity_id")
-        params["entity_id"] = entity_id
-    if user_id:
-        filters.append("al.user_id = :user_id")
-        params["user_id"] = str(user_id)
-    if since:
-        filters.append("al.at >= :since")
-        params["since"] = since
-    if until:
-        filters.append("al.at <= :until")
-        params["until"] = until
-
-    where = ("WHERE " + " AND ".join(filters)) if filters else ""
+    where, params = build_where([
+        ("al.entity_type = :entity_type", {"entity_type": entity_type}) if entity_type else None,
+        ("al.entity_id = :entity_id", {"entity_id": entity_id}) if entity_id else None,
+        ("al.user_id = :user_id", {"user_id": str(user_id)}) if user_id else None,
+        ("al.at >= :since", {"since": since}) if since else None,
+        ("al.at <= :until", {"until": until}) if until else None,
+    ])
     total = int(
         (await db.execute(text(f"SELECT COUNT(*) FROM audit_log al {where}"), params)).scalar() or 0
     )
@@ -74,7 +63,7 @@ async def get_audit_log(
     return Page[AuditLogOut](total=total, items=[AuditLogOut(**r) for r in rows])
 
 
-@router.get("/addresses/{rc_code}/history", response_model=Page[AuditLogOut])
+@router.get("/addresses/{rc_code}/history", response_model=Page[AuditLogOut], summary="Address change history", operation_id="admin.addresses.history.list")
 async def get_address_history(
     rc_code: int,
     current_user: Annotated[User, Depends(require_role("viewer", "editor", "admin"))],

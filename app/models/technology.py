@@ -1,7 +1,9 @@
 import uuid
 from datetime import datetime
-from sqlalchemy import DateTime, Text, Integer, ForeignKey, Index
+
+from sqlalchemy import DateTime, ForeignKey, Index, Integer, Text
 from sqlalchemy.orm import Mapped, mapped_column
+
 from app.models.base import Base
 
 

@@ -5,11 +5,22 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.db.address_labels import (  # noqa: F401
+    _ADDR_JOINS,
+    _FULL_ADDRESS,
+    _HOUSE,
+    _LOCALITY_LABEL,
+    _MUNI_SHORT,
+    _STREET_WITH_TYPE,
+)
 from app.dependencies import get_db
 from app.limiter import limiter
-from app.schemas.public import AddressInfo, AddressSearchResult, AvailabilityResponse, PublicAddressSearchResponse
-
-from app.db.address_labels import _ADDR_JOINS, _FULL_ADDRESS, _HOUSE, _LOCALITY_LABEL, _MUNI_SHORT, _STREET_WITH_TYPE  # noqa: F401
+from app.schemas.public import (
+    AddressInfo,
+    AddressSearchResult,
+    AvailabilityResponse,
+    PublicAddressSearchResponse,
+)
 
 log = logging.getLogger(__name__)
 
@@ -94,7 +105,7 @@ _AVAILABILITY_SQL = text("""
 """)
 
 
-@router.get("/search", response_model=PublicAddressSearchResponse)
+@router.get("/search", response_model=PublicAddressSearchResponse, summary="Search addresses", operation_id="public.addresses.search")
 @limiter.limit("60/minute")
 async def search_addresses(
     request: Request,
@@ -105,7 +116,7 @@ async def search_addresses(
     return PublicAddressSearchResponse(items=[AddressSearchResult(**row) for row in rows])
 
 
-@router.get("/{rc_code}/availability", response_model=AvailabilityResponse)
+@router.get("/{rc_code}/availability", response_model=AvailabilityResponse, summary="Address availability", operation_id="public.addresses.availability")
 @limiter.limit("60/minute")
 async def get_availability(
     request: Request,

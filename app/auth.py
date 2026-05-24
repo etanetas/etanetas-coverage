@@ -84,6 +84,8 @@ async def get_current_user(
         rows = await _candidates("__legacy__")
 
     for api_key, user in rows:
+        # NOTE: bcrypt over a 256-bit random token is safe but ~100x slower than
+        # HMAC-SHA256. Acceptable for now; switch if auth latency becomes an issue.
         if bcrypt.checkpw(raw_key.encode(), api_key.key_hash.encode()):
             # Throttle: only spawn an update task if last_used_at is >60s ago (or NULL)
             if (

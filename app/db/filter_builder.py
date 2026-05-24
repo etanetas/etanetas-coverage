@@ -4,8 +4,7 @@ Reduces duplication in endpoints that build SQL conditionally
 (`hierarchy`, `audit`, `bulk._filter_addresses`, `addresses.list`,
 `zones.list`).
 """
-from typing import Iterable
-
+from collections.abc import Iterable
 
 Clause = tuple[str, dict] | None
 

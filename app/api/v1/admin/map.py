@@ -32,7 +32,7 @@ def _parse_bbox(bbox: str) -> tuple[float, float, float, float]:
     return lon1, lat1, lon2, lat2
 
 
-@router.get("/addresses")
+@router.get("/addresses", summary="Address points GeoJSON", operation_id="admin.map.addresses")
 async def map_addresses(
     bbox: str,
     current_user: Annotated[User, Depends(get_current_user)],
@@ -86,7 +86,7 @@ async def map_addresses(
                     media_type="application/json")
 
 
-@router.get("/zones/geojson")
+@router.get("/zones/geojson", summary="Zones GeoJSON", operation_id="admin.map.zones-geojson")
 async def map_zones_geojson(
     current_user: Annotated[User, Depends(get_current_user)],
     db: Annotated[AsyncSession, Depends(get_db)],
@@ -163,7 +163,7 @@ class InPolygonResponse(BaseModel):
     rc_codes: list[int]
 
 
-@router.post("/in-polygon", response_model=InPolygonResponse)
+@router.post("/in-polygon", response_model=InPolygonResponse, summary="Addresses inside polygon", operation_id="admin.map.in-polygon")
 async def addresses_in_polygon(
     body: InPolygonRequest,
     current_user: Annotated[User, Depends(require_role("viewer", "editor", "admin"))],
@@ -172,19 +172,11 @@ async def addresses_in_polygon(
     """Return rc_codes of all buildings inside an ad-hoc polygon. For bulk-by-polygon flow."""
     geojson_str = json.dumps(body.polygon_geojson)
 
-    count = await db.scalar(text("""
-        SELECT COUNT(*) FROM addresses a
-        WHERE a.point IS NOT NULL
-          AND a.deleted_at IS NULL
-          AND a.address_type = 'building'
-          AND ST_Contains(
-              ST_SetSRID(ST_GeomFromGeoJSON(:g), 4326),
-              a.point::geometry
-          )
-    """), {"g": geojson_str})
-
-    rows = await db.execute(text("""
-        SELECT a.rc_code FROM addresses a
+    rows = (await db.execute(text("""
+        SELECT
+            a.rc_code,
+            COUNT(*) OVER () AS total
+        FROM addresses a
         WHERE a.point IS NOT NULL
           AND a.deleted_at IS NULL
           AND a.address_type = 'building'
@@ -194,9 +186,8 @@ async def addresses_in_polygon(
           )
         ORDER BY a.rc_code
         LIMIT :limit
-    """), {"g": geojson_str, "limit": body.limit})
+    """), {"g": geojson_str, "limit": body.limit})).mappings().all()
 
-    return InPolygonResponse(
-        total=int(count or 0),
-        rc_codes=[r[0] for r in rows.fetchall()],
-    )
+    total = int(rows[0]["total"]) if rows else 0
+    rc_codes = [r["rc_code"] for r in rows]
+    return InPolygonResponse(total=total, rc_codes=rc_codes)

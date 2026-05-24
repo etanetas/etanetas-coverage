@@ -1,9 +1,21 @@
+import uuid
 from datetime import datetime
 
-import uuid
-from sqlalchemy import Text, String, Integer, Boolean, ForeignKey, TIMESTAMP, BigInteger, Index, CheckConstraint, text
+from sqlalchemy import (
+    TIMESTAMP,
+    BigInteger,
+    Boolean,
+    CheckConstraint,
+    ForeignKey,
+    Index,
+    Integer,
+    String,
+    Text,
+    text,
+)
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
+
 from app.models.base import Base
 
 

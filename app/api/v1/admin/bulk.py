@@ -6,6 +6,7 @@ from datetime import date, timedelta
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
+from pydantic import TypeAdapter
 from sqlalchemy import delete, select, text
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -14,22 +15,27 @@ from app.api.pagination import Page, PaginationParams, pagination_params
 from app.api.responses import created
 from app.audit import log_action
 from app.auth import require_role
+from app.config import settings
+from app.db.address_labels import (  # noqa: F401
+    _ADDR_JOINS,
+    _FULL_ADDRESS,
+    _HOUSE,
+    _LOCALITY_LABEL,
+    _MUNI_SHORT,
+    _STREET_WITH_TYPE,
+)
 from app.dependencies import get_db
 from app.errors import raise_error
 from app.limiter import limiter
 from app.models.address import Address
 from app.models.admin import BulkOperations, BulkPreviewToken, User
 from app.models.service import AddressOffering
-from app.time import now
-
-from app.db.address_labels import _ADDR_JOINS, _FULL_ADDRESS, _HOUSE, _LOCALITY_LABEL, _MUNI_SHORT, _STREET_WITH_TYPE  # noqa: F401
-
-log = logging.getLogger(__name__)
 from app.schemas.admin import (
     AddOfferingOperation,
     BulkExecuteRequest,
     BulkExecuteResponse,
     BulkFilter,
+    BulkOperation,
     BulkOperationDetailOut,
     BulkOperationOut,
     BulkPreviewRequest,
@@ -39,14 +45,20 @@ from app.schemas.admin import (
     ChangeOfferingOperation,
     RemoveOfferingOperation,
 )
+from app.time import now
+
+log = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v1/admin", tags=["admin-bulk"])
 
-_EDITOR_RATE_LIMIT = 5000  # addresses per minute per editor
-_MAX_BULK_AFFECTED = 10_000
+_BULK_OP_ADAPTER: TypeAdapter[BulkOperation] = TypeAdapter(BulkOperation)
 
 
-@router.post("/bulk/preview", response_model=BulkPreviewResponse)
+def _parse_operation(raw: dict) -> BulkOperation:
+    return _BULK_OP_ADAPTER.validate_python(raw)
+
+
+@router.post("/bulk/preview", response_model=BulkPreviewResponse, summary="Preview bulk operation", operation_id="admin.bulk.preview")
 @limiter.limit("30/minute")
 async def bulk_preview(
     request: Request,
@@ -93,7 +105,7 @@ async def bulk_preview(
     )
 
 
-@router.post("/bulk/execute", response_model=BulkExecuteResponse, status_code=201)
+@router.post("/bulk/execute", response_model=BulkExecuteResponse, status_code=201, summary="Execute bulk operation", operation_id="admin.bulk.execute")
 @limiter.limit("10/minute")
 async def bulk_execute(
     request: Request,
@@ -108,14 +120,15 @@ async def bulk_execute(
 
     if current_user.role == "editor":
         recent = await _recent_modified_count(db, current_user.id)
-        if recent + len(rc_codes) > _EDITOR_RATE_LIMIT:
+        if recent + len(rc_codes) > settings.bulk_editor_rate_limit:
             raise HTTPException(
                 status_code=422,
-                detail=f"Rate limit: editor cannot affect more than {_EDITOR_RATE_LIMIT} addresses per minute. Contact an admin.",
+                detail=f"Rate limit: editor cannot affect more than {settings.bulk_editor_rate_limit} addresses per minute. Contact an admin.",
             )
 
     op_data: dict = preview["operation"]
-    op_type = op_data.get("type")
+    op = _parse_operation(op_data)
+    op_type = op.type
 
     bulk_op = BulkOperations(
         user_id=current_user.id,
@@ -128,32 +141,28 @@ async def bulk_execute(
     await db.flush()
 
     # Dispatch based on operation type
-    if op_type == "add_offering":
-        op = AddOfferingOperation(**op_data)
+    if isinstance(op, AddOfferingOperation):
         modified = await _execute_add_offering(db, bulk_op.id, current_user.id, op, rc_codes)
         bulk_op.rollback_data = {
             "type": "add_offering",
             "technology_id": str(op.technology_id),
             "created_codes": modified,
         }
-    elif op_type == "change_offering":
-        op = ChangeOfferingOperation(**op_data)
+    elif isinstance(op, ChangeOfferingOperation):
         modified, old_values = await _execute_change_offering(db, bulk_op.id, current_user.id, op, rc_codes)
         bulk_op.rollback_data = {
             "type": "change_offering",
             "technology_id": str(op.technology_id),
             "old_values": old_values,  # [{address_code, status, max_dl, max_ul, status_since, planned_until, notes}]
         }
-    elif op_type == "remove_offering":
-        op = RemoveOfferingOperation(**op_data)
+    else:  # RemoveOfferingOperation
+        assert isinstance(op, RemoveOfferingOperation)
         modified, deleted_data = await _execute_remove_offering(db, bulk_op.id, current_user.id, op, rc_codes)
         bulk_op.rollback_data = {
             "type": "remove_offering",
             "technology_id": str(op.technology_id),
             "deleted_offerings": deleted_data,  # full data of deleted rows
         }
-    else:
-        raise HTTPException(status_code=422, detail=f"Unknown operation type: {op_type}")
 
     bulk_op.affected_count = len(modified)
 
@@ -174,7 +183,7 @@ async def bulk_execute(
     )
 
 
-@router.post("/bulk/{bulk_op_id}/rollback", response_model=BulkRollbackResponse)
+@router.post("/bulk/{bulk_op_id}/rollback", response_model=BulkRollbackResponse, summary="Rollback bulk operation", operation_id="admin.bulk.rollback")
 async def bulk_rollback(
     bulk_op_id: uuid.UUID,
     current_user: Annotated[User, Depends(require_role("editor", "admin"))],
@@ -267,7 +276,7 @@ async def bulk_rollback(
     return BulkRollbackResponse(rolled_back_count=affected)
 
 
-@router.get("/bulk-operations", response_model=Page[BulkOperationOut])
+@router.get("/bulk-operations", response_model=Page[BulkOperationOut], summary="List bulk operations", operation_id="admin.bulk.operations.list")
 async def list_bulk_operations(
     current_user: Annotated[User, Depends(require_role("viewer", "editor", "admin"))],
     db: Annotated[AsyncSession, Depends(get_db)],
@@ -298,6 +307,7 @@ async def list_bulk_operations(
     "/bulk-operations/{op_id}",
     response_model=BulkOperationDetailOut,
     summary="Get a single bulk operation",
+    operation_id="admin.bulk.operations.get",
 )
 async def get_bulk_operation(
     op_id: uuid.UUID,
@@ -360,11 +370,11 @@ async def _filter_addresses(db: AsyncSession, f: BulkFilter) -> list[int]:
         ).scalar()
         or 0
     )
-    if count > _MAX_BULK_AFFECTED:
+    if count > settings.bulk_max_affected:
         raise_error(
             422,
             "BULK_LIMIT_EXCEEDED",
-            f"Filter matches {count} addresses (max {_MAX_BULK_AFFECTED}). Narrow your filter.",
+            f"Filter matches {count} addresses (max {settings.bulk_max_affected}). Narrow your filter.",
         )
 
     rows = await db.execute(

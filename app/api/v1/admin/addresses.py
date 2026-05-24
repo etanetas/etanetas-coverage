@@ -10,7 +10,15 @@ from app.api.pagination import Page, PaginationParams, pagination_params
 from app.api.responses import created
 from app.audit import log_action
 from app.auth import require_role
-from app.db.address_labels import _ADDR_JOINS, _FULL_ADDRESS, _HOUSE, _LOCALITY_LABEL, _MUNI_SHORT, _STREET_WITH_TYPE  # noqa: F401
+from app.db.address_labels import (  # noqa: F401
+    _ADDR_JOINS,
+    _FULL_ADDRESS,
+    _HOUSE,
+    _LOCALITY_LABEL,
+    _MUNI_SHORT,
+    _STREET_WITH_TYPE,
+)
+from app.db.filter_builder import build_where
 from app.dependencies import get_db
 from app.models.address import Address
 from app.models.admin import User
@@ -28,7 +36,7 @@ from app.time import now
 router = APIRouter(prefix="/api/v1/admin/addresses", tags=["admin-addresses"])
 
 
-@router.get("", response_model=Page[AddressSearchResult])
+@router.get("", response_model=Page[AddressSearchResult], summary="List addresses", operation_id="admin.addresses.list")
 async def list_addresses(
     current_user: Annotated[User, Depends(require_role("viewer", "editor", "admin"))],
     db: Annotated[AsyncSession, Depends(get_db)],
@@ -42,22 +50,13 @@ async def list_addresses(
 ) -> Page[AddressSearchResult]:
     use_fuzzy = q is not None and len(q) >= 2
 
-    filters = ["a.deleted_at IS NULL"]
-    params: dict = {}
-
-    if address_type:
-        filters.append("a.address_type = :address_type")
-        params["address_type"] = address_type
-    if locality_code:
-        filters.append("a.locality_code = :locality_code")
-        params["locality_code"] = locality_code
-    if street_code:
-        filters.append("a.street_code = :street_code")
-        params["street_code"] = street_code
-    if has_point:
-        filters.append("a.point IS NOT NULL")
-    if has_offering:
-        filters.append(
+    where, params = build_where([
+        ("a.deleted_at IS NULL", {}),
+        ("a.address_type = :address_type", {"address_type": address_type}) if address_type else None,
+        ("a.locality_code = :locality_code", {"locality_code": locality_code}) if locality_code else None,
+        ("a.street_code = :street_code", {"street_code": street_code}) if street_code else None,
+        ("a.point IS NOT NULL", {}) if has_point else None,
+        (
             "("
             "EXISTS (SELECT 1 FROM address_offerings ao WHERE ao.address_code = a.rc_code)"
             " OR EXISTS ("
@@ -66,29 +65,29 @@ async def list_addresses(
             "    WHERE sz.polygon IS NOT NULL AND a.point IS NOT NULL"
             "      AND ST_Contains(sz.polygon::geometry, a.point::geometry)"
             ")"
-            ")"
-        )
-
-    if use_fuzzy:
-        params["q"] = q
-        filters.append(
+            ")",
+            {},
+        ) if has_offering else None,
+        (
             "("
             "s.full_name % :q"
             " OR l.name % :q"
             " OR l.name_k % :q"
             f" OR (COALESCE(({_STREET_WITH_TYPE}) || ' ', '') || a.house_no || ', ' || l.name) % :q"
-            ")"
-        )
+            ")",
+            {"q": q},
+        ) if use_fuzzy else None,
+    ])
+
+    if use_fuzzy:
         order_by = "similarity(COALESCE(s.full_name, l.name) || ' ' || a.house_no, :q) DESC"
     else:
         order_by = "a.rc_code"
 
-    where = " AND ".join(filters)
-
     count_sql = text(f"""
         SELECT COUNT(*) FROM addresses a
         {_ADDR_JOINS}
-        WHERE {where}
+        {where}
     """)
     total = int((await db.execute(count_sql, params)).scalar() or 0)
 
@@ -102,7 +101,7 @@ async def list_addresses(
             a.address_type
         FROM addresses a
         {_ADDR_JOINS}
-        WHERE {where}
+        {where}
         ORDER BY {order_by}
         LIMIT :limit OFFSET :offset
     """)
@@ -113,7 +112,7 @@ async def list_addresses(
     )
 
 
-@router.get("/{rc_code}", response_model=AddressDetail)
+@router.get("/{rc_code}", response_model=AddressDetail, summary="Get address detail", operation_id="admin.addresses.get")
 async def get_address(
     rc_code: int,
     current_user: Annotated[User, Depends(require_role("viewer", "editor", "admin"))],
@@ -151,7 +150,7 @@ class ZoneCoverageItem(BaseModel):
     offerings: list[ZoneOfferingOut]
 
 
-@router.get("/{rc_code}/zone-coverage", response_model=Page[ZoneCoverageItem])
+@router.get("/{rc_code}/zone-coverage", response_model=Page[ZoneCoverageItem], summary="List zone coverage for address", operation_id="admin.addresses.zone-coverage.list")
 async def get_address_zone_coverage(
     rc_code: int,
     current_user: Annotated[User, Depends(require_role("viewer", "editor", "admin"))],
@@ -241,7 +240,7 @@ async def get_address_zone_coverage(
     return Page[ZoneCoverageItem](total=total, items=list(by_zone.values()))
 
 
-@router.get("/{rc_code}/offerings", response_model=Page[AddressOfferingOut])
+@router.get("/{rc_code}/offerings", response_model=Page[AddressOfferingOut], summary="List address offerings", operation_id="admin.addresses.offerings.list")
 async def list_address_offerings(
     rc_code: int,
     current_user: Annotated[User, Depends(require_role("viewer", "editor", "admin"))],
@@ -274,7 +273,7 @@ async def list_address_offerings(
     return Page[AddressOfferingOut](total=total, items=items)
 
 
-@router.post("/{rc_code}/offerings", response_model=AddressOfferingOut, status_code=201)
+@router.post("/{rc_code}/offerings", response_model=AddressOfferingOut, status_code=201, summary="Create address offering", operation_id="admin.addresses.offerings.create")
 async def create_address_offering(
     rc_code: int,
     body: AddressOfferingCreate,
@@ -316,7 +315,7 @@ async def create_address_offering(
     )
 
 
-@router.patch("/offerings/{offering_id}", response_model=AddressOfferingOut)
+@router.patch("/offerings/{offering_id}", response_model=AddressOfferingOut, summary="Update address offering", operation_id="admin.addresses.offerings.update")
 async def update_address_offering(
     offering_id: uuid.UUID,
     body: AddressOfferingUpdate,
@@ -348,6 +347,7 @@ async def update_address_offering(
     "/offerings/{offering_id}",
     status_code=204,
     summary="Delete an address-level offering. Editor+ can use this for quick correction.",
+    operation_id="admin.addresses.offerings.delete",
 )
 async def delete_address_offering(
     offering_id: uuid.UUID,

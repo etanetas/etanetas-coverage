@@ -47,7 +47,7 @@ async def locality_code(db_session) -> int:
     code = 82100
     stmts = [
         "INSERT INTO counties (rc_code, name, synced_at) VALUES (82001, 'Bulk Apskritis', NOW()) ON CONFLICT DO NOTHING",
-        f"INSERT INTO municipalities (rc_code, county_code, name, type, synced_at) VALUES (82100, 82001, 'Bulk Sav.', 'rajono', NOW()) ON CONFLICT DO NOTHING",
+        "INSERT INTO municipalities (rc_code, county_code, name, type, synced_at) VALUES (82100, 82001, 'Bulk Sav.', 'rajono', NOW()) ON CONFLICT DO NOTHING",
         f"INSERT INTO localities (rc_code, muni_code, name, type, synced_at) VALUES ({code}, 82100, 'Bulkinkai', 'miestas', NOW()) ON CONFLICT DO NOTHING",
         f"INSERT INTO streets (rc_code, locality_code, name, full_name, synced_at) VALUES (821001, {code}, 'Bulk g.', 'Bulk g., Bulkinkai', NOW()) ON CONFLICT DO NOTHING",
         f"INSERT INTO addresses (rc_code, street_code, locality_code, house_no, postal_code, synced_at, point, address_type) VALUES (82199901, 821001, {code}, '1', '00001', NOW(), ST_GeomFromEWKT('SRID=4326;POINT(25.6 54.6)'), 'building') ON CONFLICT DO NOTHING",
@@ -363,10 +363,10 @@ async def test_bulk_preview_rejects_unscoped(client, editor_user, tech):
 @pytest.mark.integration
 async def test_bulk_preview_rejects_over_cap(client, editor_user, locality_code, tech, monkeypatch):
     """When match count exceeds the cap, return 422 with BULK_LIMIT_EXCEEDED."""
-    from app.api.v1.admin import bulk as bulk_mod
+    from app.config import settings
 
     # locality_code fixture inserts 3 addresses; cap of 2 forces rejection (3 > 2)
-    monkeypatch.setattr(bulk_mod, "_MAX_BULK_AFFECTED", 2)
+    monkeypatch.setattr(settings, "bulk_max_affected", 2)
 
     _, raw = editor_user
     payload = {
