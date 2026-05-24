@@ -6,6 +6,7 @@ from datetime import date, timedelta
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
+from pydantic import TypeAdapter
 from sqlalchemy import delete, select, text
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -14,22 +15,26 @@ from app.api.pagination import Page, PaginationParams, pagination_params
 from app.api.responses import created
 from app.audit import log_action
 from app.auth import require_role
+from app.db.address_labels import (  # noqa: F401
+    _ADDR_JOINS,
+    _FULL_ADDRESS,
+    _HOUSE,
+    _LOCALITY_LABEL,
+    _MUNI_SHORT,
+    _STREET_WITH_TYPE,
+)
 from app.dependencies import get_db
 from app.errors import raise_error
 from app.limiter import limiter
 from app.models.address import Address
 from app.models.admin import BulkOperations, BulkPreviewToken, User
 from app.models.service import AddressOffering
-from app.time import now
-
-from app.db.address_labels import _ADDR_JOINS, _FULL_ADDRESS, _HOUSE, _LOCALITY_LABEL, _MUNI_SHORT, _STREET_WITH_TYPE  # noqa: F401
-
-log = logging.getLogger(__name__)
 from app.schemas.admin import (
     AddOfferingOperation,
     BulkExecuteRequest,
     BulkExecuteResponse,
     BulkFilter,
+    BulkOperation,
     BulkOperationDetailOut,
     BulkOperationOut,
     BulkPreviewRequest,
@@ -39,11 +44,20 @@ from app.schemas.admin import (
     ChangeOfferingOperation,
     RemoveOfferingOperation,
 )
+from app.time import now
+
+log = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v1/admin", tags=["admin-bulk"])
 
 _EDITOR_RATE_LIMIT = 5000  # addresses per minute per editor
 _MAX_BULK_AFFECTED = 10_000
+
+_BULK_OP_ADAPTER: TypeAdapter[BulkOperation] = TypeAdapter(BulkOperation)
+
+
+def _parse_operation(raw: dict) -> BulkOperation:
+    return _BULK_OP_ADAPTER.validate_python(raw)
 
 
 @router.post("/bulk/preview", response_model=BulkPreviewResponse, summary="Preview bulk operation", operation_id="admin.bulk.preview")
@@ -115,7 +129,8 @@ async def bulk_execute(
             )
 
     op_data: dict = preview["operation"]
-    op_type = op_data.get("type")
+    op = _parse_operation(op_data)
+    op_type = op.type
 
     bulk_op = BulkOperations(
         user_id=current_user.id,
@@ -128,32 +143,28 @@ async def bulk_execute(
     await db.flush()
 
     # Dispatch based on operation type
-    if op_type == "add_offering":
-        op = AddOfferingOperation(**op_data)
+    if isinstance(op, AddOfferingOperation):
         modified = await _execute_add_offering(db, bulk_op.id, current_user.id, op, rc_codes)
         bulk_op.rollback_data = {
             "type": "add_offering",
             "technology_id": str(op.technology_id),
             "created_codes": modified,
         }
-    elif op_type == "change_offering":
-        op = ChangeOfferingOperation(**op_data)
+    elif isinstance(op, ChangeOfferingOperation):
         modified, old_values = await _execute_change_offering(db, bulk_op.id, current_user.id, op, rc_codes)
         bulk_op.rollback_data = {
             "type": "change_offering",
             "technology_id": str(op.technology_id),
             "old_values": old_values,  # [{address_code, status, max_dl, max_ul, status_since, planned_until, notes}]
         }
-    elif op_type == "remove_offering":
-        op = RemoveOfferingOperation(**op_data)
+    else:  # RemoveOfferingOperation
+        assert isinstance(op, RemoveOfferingOperation)
         modified, deleted_data = await _execute_remove_offering(db, bulk_op.id, current_user.id, op, rc_codes)
         bulk_op.rollback_data = {
             "type": "remove_offering",
             "technology_id": str(op.technology_id),
             "deleted_offerings": deleted_data,  # full data of deleted rows
         }
-    else:
-        raise HTTPException(status_code=422, detail=f"Unknown operation type: {op_type}")
 
     bulk_op.affected_count = len(modified)
 

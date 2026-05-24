@@ -1,4 +1,3 @@
-import json
 import uuid
 from typing import Annotated
 
@@ -11,10 +10,19 @@ from app.api.pagination import Page, PaginationParams, pagination_params
 from app.api.responses import created
 from app.audit import log_action
 from app.auth import require_role
+from app.db.filter_builder import build_where
 from app.dependencies import get_db
 from app.models.admin import User
 from app.models.service import ServiceZone, ZoneOffering
-from app.schemas.admin import ZoneCreate, ZoneDetail, ZoneOfferingCreate, ZoneOfferingOut, ZoneOfferingUpdate, ZoneOut, ZoneUpdate
+from app.schemas.admin import (
+    ZoneCreate,
+    ZoneDetail,
+    ZoneOfferingCreate,
+    ZoneOfferingOut,
+    ZoneOfferingUpdate,
+    ZoneOut,
+    ZoneUpdate,
+)
 from app.time import now
 
 router = APIRouter(prefix="/api/v1/admin/zones", tags=["admin-zones"])
@@ -28,15 +36,11 @@ async def list_zones(
     q: Annotated[str | None, Query(description="substring match on zone name")] = None,
     priority_min: Annotated[int | None, Query()] = None,
 ) -> Page[ZoneOut]:
-    filters = ["deleted_at IS NULL"]
-    params: dict = {}
-    if q:
-        filters.append("name ILIKE :q")
-        params["q"] = f"%{q}%"
-    if priority_min is not None:
-        filters.append("priority >= :priority_min")
-        params["priority_min"] = priority_min
-    where = "WHERE " + " AND ".join(filters)
+    where, params = build_where([
+        ("deleted_at IS NULL", {}),
+        ("name ILIKE :q", {"q": f"%{q}%"}) if q else None,
+        ("priority >= :priority_min", {"priority_min": priority_min}) if priority_min is not None else None,
+    ])
 
     total = int(
         (await db.execute(text(f"SELECT COUNT(*) FROM service_zones {where}"), params)).scalar() or 0
