@@ -26,7 +26,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import AsyncSessionLocal
 from app.logging_config import configure_logging
-from etl.notifications import send_alert
 from app.models.address import Address, County, Locality, Municipality, Street
 from etl.config import settings
 from etl.downloaders.rc_address_points_client import RCAddressPointsClient
@@ -35,6 +34,7 @@ from etl.downloaders.rc_geojson_client import RCGeoJsonClient
 from etl.downloaders.spinta_client import SpintaClient
 from etl.loaders.geometry_load import update_geometries
 from etl.loaders.upsert_load import upsert_all
+from etl.notifications import send_alert
 from etl.state_db import (
     clear_import_progress,
     get_completed_step,

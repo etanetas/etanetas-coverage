@@ -1,4 +1,3 @@
-import asyncio
 import logging
 
 from fastapi import FastAPI
@@ -98,7 +97,7 @@ async def health() -> dict:
     except SQLAlchemyError as exc:
         log.warning("DB health check failed: %s", exc)
         raise_error(503, "SERVICE_UNAVAILABLE", "Database unavailable")
-    except asyncio.TimeoutError:
+    except TimeoutError:
         log.warning("DB health check timed out")
         raise_error(503, "SERVICE_UNAVAILABLE", "Database health check timed out")
     return {"status": "ok", "db": "up"}

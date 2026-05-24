@@ -5,11 +5,22 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.db.address_labels import (  # noqa: F401
+    _ADDR_JOINS,
+    _FULL_ADDRESS,
+    _HOUSE,
+    _LOCALITY_LABEL,
+    _MUNI_SHORT,
+    _STREET_WITH_TYPE,
+)
 from app.dependencies import get_db
 from app.limiter import limiter
-from app.schemas.public import AddressInfo, AddressSearchResult, AvailabilityResponse, PublicAddressSearchResponse
-
-from app.db.address_labels import _ADDR_JOINS, _FULL_ADDRESS, _HOUSE, _LOCALITY_LABEL, _MUNI_SHORT, _STREET_WITH_TYPE  # noqa: F401
+from app.schemas.public import (
+    AddressInfo,
+    AddressSearchResult,
+    AvailabilityResponse,
+    PublicAddressSearchResponse,
+)
 
 log = logging.getLogger(__name__)
 

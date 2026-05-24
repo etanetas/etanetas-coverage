@@ -3,7 +3,6 @@ Integration tests for admin CRUD: addresses, technologies, zones.
 """
 import secrets
 import uuid
-from datetime import date
 
 import bcrypt
 import pytest
@@ -336,8 +335,9 @@ async def seed_zone(db_session, admin_user) -> tuple[uuid.UUID, str]:
 
 @pytest.fixture
 async def seed_zone_with_polygon(db_session, admin_user) -> tuple[uuid.UUID, str]:
-    from app.models.service import ServiceZone
     from sqlalchemy import text
+
+    from app.models.service import ServiceZone
     user, raw = admin_user
     zone = ServiceZone(name="Polygon Zone", priority=5, created_by=user.id)
     db_session.add(zone)

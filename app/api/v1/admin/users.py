@@ -1,8 +1,8 @@
-import bcrypt
 import secrets
 import uuid
 from typing import Annotated
 
+import bcrypt
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -15,7 +15,14 @@ from app.config import settings
 from app.dependencies import get_db
 from app.errors import raise_error
 from app.models.admin import ApiKey, User
-from app.schemas.admin import ApiKeyCreate, ApiKeyCreated, ApiKeyOut, UserCreate, UserOut, UserUpdate
+from app.schemas.admin import (
+    ApiKeyCreate,
+    ApiKeyCreated,
+    ApiKeyOut,
+    UserCreate,
+    UserOut,
+    UserUpdate,
+)
 from app.time import now
 
 router = APIRouter(prefix="/api/v1/admin", tags=["admin-users"])

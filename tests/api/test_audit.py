@@ -1,5 +1,4 @@
 import secrets
-from datetime import date
 
 import bcrypt
 import pytest

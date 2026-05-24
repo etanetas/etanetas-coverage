@@ -7,17 +7,18 @@ Create Date: 2026-05-22 12:37:46.817296
 NOTE: zone_offerings_zone_id_fkey already has ON DELETE CASCADE in the baseline
 migration, so no FK drop/recreate is needed here.
 """
-from typing import Sequence, Union
+from collections.abc import Sequence
+from typing import Union
 
 import sqlalchemy as sa
-from alembic import op
 
+from alembic import op
 
 # revision identifiers, used by Alembic.
 revision: str = "cc7f18b34d4a"
-down_revision: Union[str, Sequence[str], None] = "6ef10fd18c20"
-branch_labels: Union[str, Sequence[str], None] = None
-depends_on: Union[str, Sequence[str], None] = None
+down_revision: str | Sequence[str] | None = "6ef10fd18c20"
+branch_labels: str | Sequence[str] | None = None
+depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:
