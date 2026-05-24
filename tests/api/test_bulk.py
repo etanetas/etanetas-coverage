@@ -363,10 +363,10 @@ async def test_bulk_preview_rejects_unscoped(client, editor_user, tech):
 @pytest.mark.integration
 async def test_bulk_preview_rejects_over_cap(client, editor_user, locality_code, tech, monkeypatch):
     """When match count exceeds the cap, return 422 with BULK_LIMIT_EXCEEDED."""
-    from app.api.v1.admin import bulk as bulk_mod
+    from app.config import settings
 
     # locality_code fixture inserts 3 addresses; cap of 2 forces rejection (3 > 2)
-    monkeypatch.setattr(bulk_mod, "_MAX_BULK_AFFECTED", 2)
+    monkeypatch.setattr(settings, "bulk_max_affected", 2)
 
     _, raw = editor_user
     payload = {

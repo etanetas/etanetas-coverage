@@ -418,7 +418,7 @@ async def test_delete_zone_soft_returns_404_on_detail(client, admin_user, seed_z
     _, raw = admin_user
     zone_id, _ = seed_zone
     await client.delete(f"/api/v1/admin/zones/{zone_id}", headers={"X-API-Key": raw})
-    detail_resp = await client.get(f"/api/v1/admin/zones/{zone_id}/detail", headers={"X-API-Key": raw})
+    detail_resp = await client.get(f"/api/v1/admin/zones/{zone_id}?expand=detail", headers={"X-API-Key": raw})
     assert detail_resp.status_code == 404
 
 
@@ -563,7 +563,7 @@ async def test_update_zone_polygon_omitted_keeps_existing(client, editor_user, s
         headers={"X-API-Key": raw},
     )
     assert resp.status_code == 200
-    detail = await client.get(f"/api/v1/admin/zones/{zone_id}/detail", headers={"X-API-Key": raw})
+    detail = await client.get(f"/api/v1/admin/zones/{zone_id}?expand=detail", headers={"X-API-Key": raw})
     assert detail.status_code == 200
     assert detail.json()["has_polygon"] is True
 
@@ -578,7 +578,7 @@ async def test_update_zone_polygon_null_clears(client, editor_user, seed_zone_wi
         headers={"X-API-Key": raw},
     )
     assert resp.status_code == 200
-    detail = await client.get(f"/api/v1/admin/zones/{zone_id}/detail", headers={"X-API-Key": raw})
+    detail = await client.get(f"/api/v1/admin/zones/{zone_id}?expand=detail", headers={"X-API-Key": raw})
     assert detail.json()["has_polygon"] is False
 
 
@@ -596,7 +596,7 @@ async def test_update_zone_polygon_replace(client, editor_user, seed_zone):
         headers={"X-API-Key": raw},
     )
     assert resp.status_code == 200
-    detail = await client.get(f"/api/v1/admin/zones/{zone_id}/detail", headers={"X-API-Key": raw})
+    detail = await client.get(f"/api/v1/admin/zones/{zone_id}?expand=detail", headers={"X-API-Key": raw})
     assert detail.json()["has_polygon"] is True
 
 

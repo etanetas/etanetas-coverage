@@ -15,6 +15,7 @@ from app.api.pagination import Page, PaginationParams, pagination_params
 from app.api.responses import created
 from app.audit import log_action
 from app.auth import require_role
+from app.config import settings
 from app.db.address_labels import (  # noqa: F401
     _ADDR_JOINS,
     _FULL_ADDRESS,
@@ -49,9 +50,6 @@ from app.time import now
 log = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v1/admin", tags=["admin-bulk"])
-
-_EDITOR_RATE_LIMIT = 5000  # addresses per minute per editor
-_MAX_BULK_AFFECTED = 10_000
 
 _BULK_OP_ADAPTER: TypeAdapter[BulkOperation] = TypeAdapter(BulkOperation)
 
@@ -122,10 +120,10 @@ async def bulk_execute(
 
     if current_user.role == "editor":
         recent = await _recent_modified_count(db, current_user.id)
-        if recent + len(rc_codes) > _EDITOR_RATE_LIMIT:
+        if recent + len(rc_codes) > settings.bulk_editor_rate_limit:
             raise HTTPException(
                 status_code=422,
-                detail=f"Rate limit: editor cannot affect more than {_EDITOR_RATE_LIMIT} addresses per minute. Contact an admin.",
+                detail=f"Rate limit: editor cannot affect more than {settings.bulk_editor_rate_limit} addresses per minute. Contact an admin.",
             )
 
     op_data: dict = preview["operation"]
@@ -372,11 +370,11 @@ async def _filter_addresses(db: AsyncSession, f: BulkFilter) -> list[int]:
         ).scalar()
         or 0
     )
-    if count > _MAX_BULK_AFFECTED:
+    if count > settings.bulk_max_affected:
         raise_error(
             422,
             "BULK_LIMIT_EXCEEDED",
-            f"Filter matches {count} addresses (max {_MAX_BULK_AFFECTED}). Narrow your filter.",
+            f"Filter matches {count} addresses (max {settings.bulk_max_affected}). Narrow your filter.",
         )
 
     rows = await db.execute(

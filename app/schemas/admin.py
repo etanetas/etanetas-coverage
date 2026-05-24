@@ -402,7 +402,7 @@ class BulkRollbackResponse(BaseModel):
 
 
 class AuditLogOut(BaseModel):
-    id: int
+    id: int  # internal serial — treat as opaque; do not rely on ordering
     user_id: uuid.UUID | None
     username: str | None
     entity_type: str

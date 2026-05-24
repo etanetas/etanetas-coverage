@@ -14,6 +14,8 @@ class Settings(BaseSettings):
     bcrypt_rounds: int = 12
     db_pool_size: int = 20
     db_max_overflow: int = 10
+    bulk_editor_rate_limit: int = 5000  # addresses per minute per editor
+    bulk_max_affected: int = 10000  # max addresses affected by a single bulk operation
     stats_municipality_codes: list[int] = [13, 41, 85]
     stats_municipality_names: list[str] = [
         "Vilniaus miesto",

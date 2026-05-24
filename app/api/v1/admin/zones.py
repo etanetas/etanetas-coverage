@@ -1,5 +1,5 @@
 import uuid
-from typing import Annotated
+from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from pydantic import BaseModel
@@ -73,47 +73,64 @@ async def list_zones(
     return Page[ZoneOut](total=total, items=items)
 
 
-@router.get("/{zone_id}/detail", response_model=ZoneDetail, summary="Get zone detail", operation_id="admin.zones.get-detail")
-async def get_zone_detail(
+@router.get(
+    "/{zone_id}",
+    response_model=ZoneOut | ZoneDetail,
+    summary="Get a zone. Use ?expand=detail for full detail including offerings and address count.",
+    operation_id="admin.zones.get",
+)
+async def get_zone(
     zone_id: uuid.UUID,
     current_user: Annotated[User, Depends(require_role("viewer", "editor", "admin"))],
     db: Annotated[AsyncSession, Depends(get_db)],
-) -> ZoneDetail:
-    """Full zone detail with polygon GeoJSON, offerings, and address count."""
+    expand: Annotated[Literal["detail"] | None, Query()] = None,
+) -> ZoneOut | ZoneDetail:
+    """Get a zone. Use ?expand=detail for full detail with polygon, offerings, and address count."""
     zone = await _require_zone(db, zone_id)
 
-    polygon_row = (await db.execute(text("""
-        SELECT
-            CASE WHEN polygon IS NOT NULL
-                 THEN ST_AsGeoJSON(ST_SimplifyPreserveTopology(polygon::geometry, 0.0001))::jsonb
-                 ELSE NULL
-            END AS polygon_geojson
-        FROM service_zones WHERE id = CAST(:id AS uuid)
-    """), {"id": str(zone_id)})).mappings().first()
+    if expand == "detail":
+        polygon_row = (await db.execute(text("""
+            SELECT
+                CASE WHEN polygon IS NOT NULL
+                     THEN ST_AsGeoJSON(ST_SimplifyPreserveTopology(polygon::geometry, 0.0001))::jsonb
+                     ELSE NULL
+                END AS polygon_geojson
+            FROM service_zones WHERE id = CAST(:id AS uuid)
+        """), {"id": str(zone_id)})).mappings().first()
 
-    count_row = (await db.execute(text("""
-        SELECT COUNT(*) AS cnt
-        FROM addresses a
-        JOIN service_zones z ON ST_Contains(z.polygon::geometry, a.point::geometry)
-        WHERE z.id = CAST(:id AS uuid) AND a.deleted_at IS NULL
-    """), {"id": str(zone_id)})).first()
+        count_row = (await db.execute(text("""
+            SELECT COUNT(*) AS cnt
+            FROM addresses a
+            JOIN service_zones z ON ST_Contains(z.polygon::geometry, a.point::geometry)
+            WHERE z.id = CAST(:id AS uuid) AND a.deleted_at IS NULL
+        """), {"id": str(zone_id)})).first()
 
-    offerings_result = await db.execute(
-        select(ZoneOffering).where(ZoneOffering.zone_id == zone_id).order_by(ZoneOffering.created_at)
-    )
-    offerings = list(offerings_result.scalars().all())
+        offerings_result = await db.execute(
+            select(ZoneOffering).where(ZoneOffering.zone_id == zone_id).order_by(ZoneOffering.created_at)
+        )
+        offerings = list(offerings_result.scalars().all())
 
-    return ZoneDetail(
-        id=zone.id,
-        name=zone.name,
-        description=zone.description,
-        priority=zone.priority,
-        has_polygon=zone.polygon is not None,
-        polygon_geojson=polygon_row["polygon_geojson"] if polygon_row else None,
-        created_at=zone.created_at,
-        offerings=offerings,
-        address_count=int(count_row[0]) if count_row and zone.polygon is not None else 0,
-    )
+        return ZoneDetail(
+            id=zone.id,
+            name=zone.name,
+            description=zone.description,
+            priority=zone.priority,
+            has_polygon=zone.polygon is not None,
+            polygon_geojson=polygon_row["polygon_geojson"] if polygon_row else None,
+            created_at=zone.created_at,
+            offerings=offerings,
+            address_count=int(count_row[0]) if count_row and zone.polygon is not None else 0,
+        )
+    else:
+        return ZoneOut(
+            id=zone.id,
+            name=zone.name,
+            description=zone.description,
+            priority=zone.priority,
+            has_polygon=zone.polygon is not None,
+            polygon_geojson=None,
+            created_at=zone.created_at,
+        )
 
 
 @router.post("", response_model=ZoneOut, status_code=201, summary="Create zone", operation_id="admin.zones.create")
