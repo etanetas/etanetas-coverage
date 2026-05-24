@@ -18,17 +18,17 @@ from app.models.admin import ApiKey, User
 from app.schemas.admin import ApiKeyCreate, ApiKeyCreated, ApiKeyOut, UserCreate, UserOut, UserUpdate
 from app.time import now
 
-router = APIRouter(prefix="/api/v1/admin", tags=["admin"])
+router = APIRouter(prefix="/api/v1/admin", tags=["admin-users"])
 
 
-@router.get("/me", response_model=UserOut)
+@router.get("/me", response_model=UserOut, summary="Current user info", operation_id="admin.users.me")
 async def get_me(
     current_user: Annotated[User, Depends(get_current_user)],
 ) -> User:
     return current_user
 
 
-@router.get("/users", response_model=Page[UserOut])
+@router.get("/users", response_model=Page[UserOut], summary="List users", operation_id="admin.users.list")
 async def list_users(
     current_user: Annotated[User, Depends(require_role("admin"))],
     db: Annotated[AsyncSession, Depends(get_db)],
@@ -57,7 +57,7 @@ async def list_users(
     return Page[UserOut](total=total, items=items)
 
 
-@router.post("/users", response_model=UserOut, status_code=201)
+@router.post("/users", response_model=UserOut, status_code=201, summary="Create user", operation_id="admin.users.create")
 async def create_user(
     body: UserCreate,
     current_user: Annotated[User, Depends(require_role("admin"))],
@@ -82,7 +82,7 @@ async def create_user(
     )
 
 
-@router.patch("/users/{user_id}", response_model=UserOut)
+@router.patch("/users/{user_id}", response_model=UserOut, summary="Update user", operation_id="admin.users.update")
 async def update_user(
     user_id: uuid.UUID,
     body: UserUpdate,
@@ -107,7 +107,7 @@ async def update_user(
     return user
 
 
-@router.delete("/users/{user_id}", status_code=204)
+@router.delete("/users/{user_id}", status_code=204, summary="Deactivate user", operation_id="admin.users.delete")
 async def delete_user(
     user_id: uuid.UUID,
     current_user: Annotated[User, Depends(require_role("admin"))],
@@ -131,7 +131,7 @@ async def delete_user(
     await db.commit()
 
 
-@router.get("/users/{user_id}/api-keys", response_model=Page[ApiKeyOut])
+@router.get("/users/{user_id}/api-keys", response_model=Page[ApiKeyOut], summary="List API keys for user", operation_id="admin.users.api-keys.list")
 async def list_api_keys(
     user_id: uuid.UUID,
     current_user: Annotated[User, Depends(require_role("admin"))],
@@ -152,7 +152,7 @@ async def list_api_keys(
     return Page[ApiKeyOut](total=total, items=items)
 
 
-@router.post("/users/{user_id}/api-keys", response_model=ApiKeyCreated, status_code=201)
+@router.post("/users/{user_id}/api-keys", response_model=ApiKeyCreated, status_code=201, summary="Create API key for user", operation_id="admin.users.api-keys.create")
 async def create_api_key(
     user_id: uuid.UUID,
     body: ApiKeyCreate,
@@ -188,7 +188,7 @@ async def create_api_key(
     )
 
 
-@router.delete("/api-keys/{key_id}", status_code=204)
+@router.delete("/api-keys/{key_id}", status_code=204, summary="Revoke API key", operation_id="admin.users.api-keys.delete")
 async def revoke_api_key(
     key_id: uuid.UUID,
     current_user: Annotated[User, Depends(require_role("admin"))],
@@ -209,7 +209,7 @@ async def revoke_api_key(
     await db.commit()
 
 
-@router.get("/users/by-lms-username/{lms_username}", response_model=UserOut)
+@router.get("/users/by-lms-username/{lms_username}", response_model=UserOut, summary="Get user by LMS username", operation_id="admin.users.get-by-lms")
 async def get_user_by_lms_username(
     lms_username: str,
     current_user: Annotated[User, Depends(require_role("admin"))],

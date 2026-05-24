@@ -32,7 +32,7 @@ def _parse_bbox(bbox: str) -> tuple[float, float, float, float]:
     return lon1, lat1, lon2, lat2
 
 
-@router.get("/addresses")
+@router.get("/addresses", summary="Address points GeoJSON", operation_id="admin.map.addresses")
 async def map_addresses(
     bbox: str,
     current_user: Annotated[User, Depends(get_current_user)],
@@ -86,7 +86,7 @@ async def map_addresses(
                     media_type="application/json")
 
 
-@router.get("/zones/geojson")
+@router.get("/zones/geojson", summary="Zones GeoJSON", operation_id="admin.map.zones-geojson")
 async def map_zones_geojson(
     current_user: Annotated[User, Depends(get_current_user)],
     db: Annotated[AsyncSession, Depends(get_db)],
@@ -163,7 +163,7 @@ class InPolygonResponse(BaseModel):
     rc_codes: list[int]
 
 
-@router.post("/in-polygon", response_model=InPolygonResponse)
+@router.post("/in-polygon", response_model=InPolygonResponse, summary="Addresses inside polygon", operation_id="admin.map.in-polygon")
 async def addresses_in_polygon(
     body: InPolygonRequest,
     current_user: Annotated[User, Depends(require_role("viewer", "editor", "admin"))],

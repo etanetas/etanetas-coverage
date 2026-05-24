@@ -46,7 +46,7 @@ _EDITOR_RATE_LIMIT = 5000  # addresses per minute per editor
 _MAX_BULK_AFFECTED = 10_000
 
 
-@router.post("/bulk/preview", response_model=BulkPreviewResponse)
+@router.post("/bulk/preview", response_model=BulkPreviewResponse, summary="Preview bulk operation", operation_id="admin.bulk.preview")
 @limiter.limit("30/minute")
 async def bulk_preview(
     request: Request,
@@ -93,7 +93,7 @@ async def bulk_preview(
     )
 
 
-@router.post("/bulk/execute", response_model=BulkExecuteResponse, status_code=201)
+@router.post("/bulk/execute", response_model=BulkExecuteResponse, status_code=201, summary="Execute bulk operation", operation_id="admin.bulk.execute")
 @limiter.limit("10/minute")
 async def bulk_execute(
     request: Request,
@@ -174,7 +174,7 @@ async def bulk_execute(
     )
 
 
-@router.post("/bulk/{bulk_op_id}/rollback", response_model=BulkRollbackResponse)
+@router.post("/bulk/{bulk_op_id}/rollback", response_model=BulkRollbackResponse, summary="Rollback bulk operation", operation_id="admin.bulk.rollback")
 async def bulk_rollback(
     bulk_op_id: uuid.UUID,
     current_user: Annotated[User, Depends(require_role("editor", "admin"))],
@@ -267,7 +267,7 @@ async def bulk_rollback(
     return BulkRollbackResponse(rolled_back_count=affected)
 
 
-@router.get("/bulk-operations", response_model=Page[BulkOperationOut])
+@router.get("/bulk-operations", response_model=Page[BulkOperationOut], summary="List bulk operations", operation_id="admin.bulk.operations.list")
 async def list_bulk_operations(
     current_user: Annotated[User, Depends(require_role("viewer", "editor", "admin"))],
     db: Annotated[AsyncSession, Depends(get_db)],
@@ -298,6 +298,7 @@ async def list_bulk_operations(
     "/bulk-operations/{op_id}",
     response_model=BulkOperationDetailOut,
     summary="Get a single bulk operation",
+    operation_id="admin.bulk.operations.get",
 )
 async def get_bulk_operation(
     op_id: uuid.UUID,

@@ -24,7 +24,7 @@ from app.time import now
 router = APIRouter(prefix="/api/v1/admin", tags=["admin-technologies"])
 
 
-@router.get("/technology-types", response_model=Page[TechnologyTypeOut])
+@router.get("/technology-types", response_model=Page[TechnologyTypeOut], summary="List technology types", operation_id="admin.technology-types.list")
 async def list_technology_types(
     current_user: Annotated[User, Depends(require_role("viewer", "editor", "admin"))],
     db: Annotated[AsyncSession, Depends(get_db)],
@@ -45,7 +45,7 @@ async def list_technology_types(
     return Page[TechnologyTypeOut](total=total, items=items)
 
 
-@router.patch("/technology-types/{type_id}", response_model=TechnologyTypeOut)
+@router.patch("/technology-types/{type_id}", response_model=TechnologyTypeOut, summary="Update technology type", operation_id="admin.technology-types.update")
 async def update_technology_type(
     type_id: uuid.UUID,
     body: TechnologyTypeUpdate,
@@ -64,7 +64,7 @@ async def update_technology_type(
     return tt
 
 
-@router.get("/technologies", response_model=Page[TechnologyOut])
+@router.get("/technologies", response_model=Page[TechnologyOut], summary="List technologies", operation_id="admin.technologies.list")
 async def list_technologies(
     current_user: Annotated[User, Depends(require_role("viewer", "editor", "admin"))],
     db: Annotated[AsyncSession, Depends(get_db)],
@@ -90,7 +90,7 @@ async def list_technologies(
     return Page[TechnologyOut](total=total, items=items)
 
 
-@router.post("/technologies", response_model=TechnologyOut, status_code=201)
+@router.post("/technologies", response_model=TechnologyOut, status_code=201, summary="Create technology", operation_id="admin.technologies.create")
 async def create_technology(
     body: TechnologyCreate,
     current_user: Annotated[User, Depends(require_role("admin"))],
@@ -116,7 +116,7 @@ async def create_technology(
     )
 
 
-@router.patch("/technologies/{tech_id}", response_model=TechnologyOut)
+@router.patch("/technologies/{tech_id}", response_model=TechnologyOut, summary="Update technology", operation_id="admin.technologies.update")
 async def update_technology(
     tech_id: uuid.UUID,
     body: TechnologyUpdate,
@@ -135,7 +135,7 @@ async def update_technology(
     return tech
 
 
-@router.delete("/technologies/{tech_id}", status_code=204)
+@router.delete("/technologies/{tech_id}", status_code=204, summary="Delete technology", operation_id="admin.technologies.delete")
 async def delete_technology(
     tech_id: uuid.UUID,
     current_user: Annotated[User, Depends(require_role("admin"))],

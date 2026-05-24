@@ -94,7 +94,7 @@ _AVAILABILITY_SQL = text("""
 """)
 
 
-@router.get("/search", response_model=PublicAddressSearchResponse)
+@router.get("/search", response_model=PublicAddressSearchResponse, summary="Search addresses", operation_id="public.addresses.search")
 @limiter.limit("60/minute")
 async def search_addresses(
     request: Request,
@@ -105,7 +105,7 @@ async def search_addresses(
     return PublicAddressSearchResponse(items=[AddressSearchResult(**row) for row in rows])
 
 
-@router.get("/{rc_code}/availability", response_model=AvailabilityResponse)
+@router.get("/{rc_code}/availability", response_model=AvailabilityResponse, summary="Address availability", operation_id="public.addresses.availability")
 @limiter.limit("60/minute")
 async def get_availability(
     request: Request,

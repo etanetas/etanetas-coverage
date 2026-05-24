@@ -29,7 +29,7 @@ _AUDIT_SELECT = """
 """
 
 
-@router.get("/audit-log", response_model=Page[AuditLogOut])
+@router.get("/audit-log", response_model=Page[AuditLogOut], summary="Query audit log", operation_id="admin.audit-log.list")
 async def get_audit_log(
     current_user: Annotated[User, Depends(require_role("admin"))],
     db: Annotated[AsyncSession, Depends(get_db)],
@@ -74,7 +74,7 @@ async def get_audit_log(
     return Page[AuditLogOut](total=total, items=[AuditLogOut(**r) for r in rows])
 
 
-@router.get("/addresses/{rc_code}/history", response_model=Page[AuditLogOut])
+@router.get("/addresses/{rc_code}/history", response_model=Page[AuditLogOut], summary="Address change history", operation_id="admin.addresses.history.list")
 async def get_address_history(
     rc_code: int,
     current_user: Annotated[User, Depends(require_role("viewer", "editor", "admin"))],

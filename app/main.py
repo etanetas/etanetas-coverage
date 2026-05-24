@@ -37,9 +37,24 @@ log = logging.getLogger(__name__)
 
 configure_logging()
 
+_TAGS = [
+    {"name": "admin-addresses", "description": "Address search, details and address-level offerings"},
+    {"name": "admin-zones", "description": "Service zones (polygons) and zone offerings"},
+    {"name": "admin-users", "description": "User accounts and API keys"},
+    {"name": "admin-technologies", "description": "Technology type catalog"},
+    {"name": "admin-audit", "description": "Audit log queries"},
+    {"name": "admin-bulk", "description": "Bulk operations: preview / execute / rollback"},
+    {"name": "admin-hierarchy", "description": "Cascading dropdowns: county → municipality → locality → street"},
+    {"name": "admin-map", "description": "GeoJSON map tiles and polygon search"},
+    {"name": "admin-stats", "description": "Coverage statistics"},
+    {"name": "public", "description": "Public unauthenticated endpoints"},
+    {"name": "health", "description": "Liveness and readiness probes"},
+]
+
 app = FastAPI(
     title="Etanetas Address API",
     version="0.1.0",
+    openapi_tags=_TAGS,
 )
 
 app.state.limiter = limiter
@@ -76,7 +91,7 @@ async def _db_ping() -> None:
         await session.execute(text("SELECT 1"))
 
 
-@app.get("/health", tags=["health"], summary="Liveness + DB readiness probe")
+@app.get("/health", tags=["health"], summary="Liveness + DB readiness probe", operation_id="health.check")
 async def health() -> dict:
     try:
         await _db_ping()

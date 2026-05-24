@@ -20,7 +20,7 @@ from app.time import now
 router = APIRouter(prefix="/api/v1/admin/zones", tags=["admin-zones"])
 
 
-@router.get("", response_model=Page[ZoneOut])
+@router.get("", response_model=Page[ZoneOut], summary="List zones", operation_id="admin.zones.list")
 async def list_zones(
     current_user: Annotated[User, Depends(require_role("viewer", "editor", "admin"))],
     db: Annotated[AsyncSession, Depends(get_db)],
@@ -69,7 +69,7 @@ async def list_zones(
     return Page[ZoneOut](total=total, items=items)
 
 
-@router.get("/{zone_id}/detail", response_model=ZoneDetail)
+@router.get("/{zone_id}/detail", response_model=ZoneDetail, summary="Get zone detail", operation_id="admin.zones.get-detail")
 async def get_zone_detail(
     zone_id: uuid.UUID,
     current_user: Annotated[User, Depends(require_role("viewer", "editor", "admin"))],
@@ -112,7 +112,7 @@ async def get_zone_detail(
     )
 
 
-@router.post("", response_model=ZoneOut, status_code=201)
+@router.post("", response_model=ZoneOut, status_code=201, summary="Create zone", operation_id="admin.zones.create")
 async def create_zone(
     body: ZoneCreate,
     current_user: Annotated[User, Depends(require_role("editor", "admin"))],
@@ -153,7 +153,7 @@ async def create_zone(
     )
 
 
-@router.patch("/{zone_id}", response_model=ZoneOut)
+@router.patch("/{zone_id}", response_model=ZoneOut, summary="Update zone", operation_id="admin.zones.update")
 async def update_zone(
     zone_id: uuid.UUID,
     body: ZoneUpdate,
@@ -199,7 +199,7 @@ async def update_zone(
     )
 
 
-@router.delete("/{zone_id}", status_code=204)
+@router.delete("/{zone_id}", status_code=204, summary="Delete zone", operation_id="admin.zones.delete")
 async def delete_zone(
     zone_id: uuid.UUID,
     current_user: Annotated[User, Depends(require_role("admin"))],
@@ -211,7 +211,7 @@ async def delete_zone(
     await db.commit()
 
 
-@router.get("/{zone_id}/offerings", response_model=Page[ZoneOfferingOut])
+@router.get("/{zone_id}/offerings", response_model=Page[ZoneOfferingOut], summary="List zone offerings", operation_id="admin.zones.offerings.list")
 async def list_zone_offerings(
     zone_id: uuid.UUID,
     current_user: Annotated[User, Depends(require_role("viewer", "editor", "admin"))],
@@ -240,7 +240,7 @@ async def list_zone_offerings(
     return Page[ZoneOfferingOut](total=total, items=items)
 
 
-@router.post("/{zone_id}/offerings", response_model=ZoneOfferingOut, status_code=201)
+@router.post("/{zone_id}/offerings", response_model=ZoneOfferingOut, status_code=201, summary="Create zone offering", operation_id="admin.zones.offerings.create")
 async def create_zone_offering(
     zone_id: uuid.UUID,
     body: ZoneOfferingCreate,
@@ -273,7 +273,7 @@ async def create_zone_offering(
     )
 
 
-@router.patch("/offerings/{offering_id}", response_model=ZoneOfferingOut)
+@router.patch("/offerings/{offering_id}", response_model=ZoneOfferingOut, summary="Update zone offering", operation_id="admin.zones.offerings.update")
 async def update_zone_offering(
     offering_id: uuid.UUID,
     body: ZoneOfferingUpdate,
@@ -293,7 +293,7 @@ async def update_zone_offering(
     return offering
 
 
-@router.delete("/offerings/{offering_id}", status_code=204)
+@router.delete("/offerings/{offering_id}", status_code=204, summary="Delete zone offering", operation_id="admin.zones.offerings.delete")
 async def delete_zone_offering(
     offering_id: uuid.UUID,
     current_user: Annotated[User, Depends(require_role("editor", "admin"))],
@@ -314,7 +314,7 @@ class ZoneAddressItem(BaseModel):
     has_override: bool  # True if this address has its own address_offering
 
 
-@router.get("/{zone_id}/addresses", response_model=Page[ZoneAddressItem])
+@router.get("/{zone_id}/addresses", response_model=Page[ZoneAddressItem], summary="List addresses in zone", operation_id="admin.zones.addresses.list")
 async def list_zone_addresses(
     zone_id: uuid.UUID,
     current_user: Annotated[User, Depends(require_role("viewer", "editor", "admin"))],

@@ -72,7 +72,7 @@ def _scoped_address_filter(muni_codes: list[int] | None) -> tuple[str, dict]:
     )
 
 
-@router.get("/stats", response_model=CoverageStats)
+@router.get("/stats", response_model=CoverageStats, summary="Coverage statistics", operation_id="admin.stats.coverage")
 async def get_coverage_stats(
     current_user: Annotated[User, Depends(get_current_user)],
     db: Annotated[AsyncSession, Depends(get_db)],

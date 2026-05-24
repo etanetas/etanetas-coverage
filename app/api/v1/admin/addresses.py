@@ -28,7 +28,7 @@ from app.time import now
 router = APIRouter(prefix="/api/v1/admin/addresses", tags=["admin-addresses"])
 
 
-@router.get("", response_model=Page[AddressSearchResult])
+@router.get("", response_model=Page[AddressSearchResult], summary="List addresses", operation_id="admin.addresses.list")
 async def list_addresses(
     current_user: Annotated[User, Depends(require_role("viewer", "editor", "admin"))],
     db: Annotated[AsyncSession, Depends(get_db)],
@@ -113,7 +113,7 @@ async def list_addresses(
     )
 
 
-@router.get("/{rc_code}", response_model=AddressDetail)
+@router.get("/{rc_code}", response_model=AddressDetail, summary="Get address detail", operation_id="admin.addresses.get")
 async def get_address(
     rc_code: int,
     current_user: Annotated[User, Depends(require_role("viewer", "editor", "admin"))],
@@ -151,7 +151,7 @@ class ZoneCoverageItem(BaseModel):
     offerings: list[ZoneOfferingOut]
 
 
-@router.get("/{rc_code}/zone-coverage", response_model=Page[ZoneCoverageItem])
+@router.get("/{rc_code}/zone-coverage", response_model=Page[ZoneCoverageItem], summary="List zone coverage for address", operation_id="admin.addresses.zone-coverage.list")
 async def get_address_zone_coverage(
     rc_code: int,
     current_user: Annotated[User, Depends(require_role("viewer", "editor", "admin"))],
@@ -241,7 +241,7 @@ async def get_address_zone_coverage(
     return Page[ZoneCoverageItem](total=total, items=list(by_zone.values()))
 
 
-@router.get("/{rc_code}/offerings", response_model=Page[AddressOfferingOut])
+@router.get("/{rc_code}/offerings", response_model=Page[AddressOfferingOut], summary="List address offerings", operation_id="admin.addresses.offerings.list")
 async def list_address_offerings(
     rc_code: int,
     current_user: Annotated[User, Depends(require_role("viewer", "editor", "admin"))],
@@ -274,7 +274,7 @@ async def list_address_offerings(
     return Page[AddressOfferingOut](total=total, items=items)
 
 
-@router.post("/{rc_code}/offerings", response_model=AddressOfferingOut, status_code=201)
+@router.post("/{rc_code}/offerings", response_model=AddressOfferingOut, status_code=201, summary="Create address offering", operation_id="admin.addresses.offerings.create")
 async def create_address_offering(
     rc_code: int,
     body: AddressOfferingCreate,
@@ -316,7 +316,7 @@ async def create_address_offering(
     )
 
 
-@router.patch("/offerings/{offering_id}", response_model=AddressOfferingOut)
+@router.patch("/offerings/{offering_id}", response_model=AddressOfferingOut, summary="Update address offering", operation_id="admin.addresses.offerings.update")
 async def update_address_offering(
     offering_id: uuid.UUID,
     body: AddressOfferingUpdate,
@@ -348,6 +348,7 @@ async def update_address_offering(
     "/offerings/{offering_id}",
     status_code=204,
     summary="Delete an address-level offering. Editor+ can use this for quick correction.",
+    operation_id="admin.addresses.offerings.delete",
 )
 async def delete_address_offering(
     offering_id: uuid.UUID,
