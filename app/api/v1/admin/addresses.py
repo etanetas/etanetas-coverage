@@ -1,12 +1,13 @@
 import uuid
 from typing import Annotated, Literal
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from pydantic import BaseModel
 from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.pagination import Page, PaginationParams, pagination_params
+from app.api.responses import created
 from app.audit import log_action
 from app.auth import require_role
 from app.db.address_labels import _ADDR_JOINS, _FULL_ADDRESS, _HOUSE, _LOCALITY_LABEL, _MUNI_SHORT, _STREET_WITH_TYPE  # noqa: F401
@@ -255,7 +256,8 @@ async def create_address_offering(
     body: AddressOfferingCreate,
     current_user: Annotated[User, Depends(require_role("editor", "admin"))],
     db: Annotated[AsyncSession, Depends(get_db)],
-) -> AddressOffering:
+    response: Response,
+) -> AddressOfferingOut:
     existing = await db.execute(
         select(AddressOffering).where(
             AddressOffering.address_code == rc_code,
@@ -283,7 +285,11 @@ async def create_address_offering(
     )
     await db.commit()
     await db.refresh(offering)
-    return offering
+    return created(
+        AddressOfferingOut.model_validate(offering),
+        location=f"/api/v1/admin/addresses/offerings/{offering.id}",
+        response=response,
+    )
 
 
 @router.patch("/offerings/{offering_id}", response_model=AddressOfferingOut)

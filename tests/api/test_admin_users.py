@@ -204,3 +204,47 @@ async def test_user_not_found(client, admin):
     _, raw = admin
     resp = await client.get(f"/api/v1/admin/users/{uuid.uuid4()}/api-keys", headers={"X-API-Key": raw})
     assert resp.status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# T9.1 — Location header on create_user
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.integration
+async def test_create_user_sets_location_header(client, admin):
+    _, raw = admin
+    username = _unique("locuser")
+    resp = await client.post(
+        "/api/v1/admin/users",
+        json={"username": username, "email": f"{username}@example.com", "role": "viewer"},
+        headers={"X-API-Key": raw},
+    )
+    assert resp.status_code == 201
+    user_id = resp.json()["id"]
+    assert resp.headers["location"] == f"/api/v1/admin/users/{user_id}"
+
+
+# ---------------------------------------------------------------------------
+# T9.7 — Cache-Control: no-store on create_api_key
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.integration
+async def test_create_api_key_no_store(client, admin, db_session):
+    _, raw = admin
+    target = User(
+        username=_unique("nostore"),
+        email=f"{_unique('nostore')}@example.com",
+        role="viewer",
+        active=True,
+    )
+    db_session.add(target)
+    await db_session.flush()
+    resp = await client.post(
+        f"/api/v1/admin/users/{target.id}/api-keys",
+        json={"name": "ns"},
+        headers={"X-API-Key": raw},
+    )
+    assert resp.status_code == 201
+    assert resp.headers["cache-control"] == "no-store"

@@ -2,12 +2,13 @@ import json
 import uuid
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from pydantic import BaseModel
 from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.pagination import Page, PaginationParams, pagination_params
+from app.api.responses import created
 from app.audit import log_action
 from app.auth import require_role
 from app.dependencies import get_db
@@ -116,6 +117,7 @@ async def create_zone(
     body: ZoneCreate,
     current_user: Annotated[User, Depends(require_role("editor", "admin"))],
     db: Annotated[AsyncSession, Depends(get_db)],
+    response: Response,
 ) -> ZoneOut:
     zone = ServiceZone(
         name=body.name,
@@ -136,14 +138,18 @@ async def create_zone(
                      {"name": body.name, "priority": body.priority})
     await db.commit()
     await db.refresh(zone)
-    return ZoneOut(
-        id=zone.id,
-        name=zone.name,
-        description=zone.description,
-        priority=zone.priority,
-        has_polygon=zone.polygon is not None,
-        polygon_geojson=body.polygon_geojson.model_dump() if body.polygon_geojson is not None else None,
-        created_at=zone.created_at,
+    return created(
+        ZoneOut(
+            id=zone.id,
+            name=zone.name,
+            description=zone.description,
+            priority=zone.priority,
+            has_polygon=zone.polygon is not None,
+            polygon_geojson=body.polygon_geojson.model_dump() if body.polygon_geojson is not None else None,
+            created_at=zone.created_at,
+        ),
+        location=f"/api/v1/admin/zones/{zone.id}",
+        response=response,
     )
 
 
@@ -240,7 +246,8 @@ async def create_zone_offering(
     body: ZoneOfferingCreate,
     current_user: Annotated[User, Depends(require_role("editor", "admin"))],
     db: Annotated[AsyncSession, Depends(get_db)],
-) -> ZoneOffering:
+    response: Response,
+) -> ZoneOfferingOut:
     await _require_zone(db, zone_id)
 
     existing = await db.execute(
@@ -259,7 +266,11 @@ async def create_zone_offering(
                      {"zone_id": str(zone_id), **body.model_dump()})
     await db.commit()
     await db.refresh(offering)
-    return offering
+    return created(
+        ZoneOfferingOut.model_validate(offering),
+        location=f"/api/v1/admin/zones/offerings/{offering.id}",
+        response=response,
+    )
 
 
 @router.patch("/offerings/{offering_id}", response_model=ZoneOfferingOut)

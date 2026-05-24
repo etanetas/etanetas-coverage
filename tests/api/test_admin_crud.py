@@ -643,3 +643,81 @@ async def test_soft_deleted_tech_excluded_from_availability(
     avail = await client.get(f"/api/v1/public/addresses/{seed_address}/availability")
     assert avail.status_code == 200
     assert len(avail.json().get("available", [])) == 0
+
+
+# ---------------------------------------------------------------------------
+# T9.1 — Location header on 201 responses
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.integration
+async def test_create_zone_sets_location_header(client, editor_user):
+    _, raw = editor_user
+    resp = await client.post(
+        "/api/v1/admin/zones",
+        json={"name": "Loc Zone", "priority": 1},
+        headers={"X-API-Key": raw},
+    )
+    assert resp.status_code == 201
+    assert resp.headers["location"].startswith("/api/v1/admin/zones/")
+    zone_id = resp.json()["id"]
+    assert resp.headers["location"].endswith(zone_id)
+
+
+@pytest.mark.integration
+async def test_create_zone_offering_sets_location_header(client, editor_user, seed_zone, seed_tech):
+    _, raw = editor_user
+    zone_id, _ = seed_zone
+    _, tech = seed_tech
+    resp = await client.post(
+        f"/api/v1/admin/zones/{zone_id}/offerings",
+        json={
+            "technology_id": str(tech.id),
+            "status": "available",
+            "max_download_mbps": 100,
+            "max_upload_mbps": 50,
+            "status_since": "2026-01-01",
+        },
+        headers={"X-API-Key": raw},
+    )
+    assert resp.status_code == 201
+    offering_id = resp.json()["id"]
+    assert resp.headers["location"] == f"/api/v1/admin/zones/offerings/{offering_id}"
+
+
+@pytest.mark.integration
+async def test_create_technology_sets_location_header(client, admin_user, seed_tech):
+    _, raw = admin_user
+    tt, _ = seed_tech
+    resp = await client.post(
+        "/api/v1/admin/technologies",
+        json={
+            "type_id": str(tt.id),
+            "variant_code": f"LOC_{secrets.token_hex(4).upper()}",
+            "display_name": "Location Test",
+        },
+        headers={"X-API-Key": raw},
+    )
+    assert resp.status_code == 201
+    tech_id = resp.json()["id"]
+    assert resp.headers["location"] == f"/api/v1/admin/technologies/{tech_id}"
+
+
+@pytest.mark.integration
+async def test_create_address_offering_sets_location_header(client, editor_user, seed_address, seed_tech):
+    _, raw = editor_user
+    _, tech = seed_tech
+    resp = await client.post(
+        f"/api/v1/admin/addresses/{seed_address}/offerings",
+        json={
+            "technology_id": str(tech.id),
+            "status": "available",
+            "max_download_mbps": 500,
+            "max_upload_mbps": 100,
+            "status_since": "2026-01-01",
+        },
+        headers={"X-API-Key": raw},
+    )
+    assert resp.status_code == 201
+    offering_id = resp.json()["id"]
+    assert resp.headers["location"] == f"/api/v1/admin/addresses/offerings/{offering_id}"
