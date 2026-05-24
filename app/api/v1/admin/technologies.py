@@ -1,11 +1,12 @@
 import uuid
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.pagination import Page, PaginationParams, pagination_params
+from app.api.responses import created
 from app.audit import log_action
 from app.auth import require_role
 from app.dependencies import get_db
@@ -94,7 +95,8 @@ async def create_technology(
     body: TechnologyCreate,
     current_user: Annotated[User, Depends(require_role("admin"))],
     db: Annotated[AsyncSession, Depends(get_db)],
-) -> Technology:
+    response: Response,
+) -> TechnologyOut:
     existing = await db.execute(
         select(Technology).where(Technology.variant_code == body.variant_code)
     )
@@ -107,7 +109,11 @@ async def create_technology(
     await log_action(db, current_user.id, "technology", str(tech.id), "create", body.model_dump())
     await db.commit()
     await db.refresh(tech)
-    return tech
+    return created(
+        TechnologyOut.model_validate(tech),
+        location=f"/api/v1/admin/technologies/{tech.id}",
+        response=response,
+    )
 
 
 @router.patch("/technologies/{tech_id}", response_model=TechnologyOut)

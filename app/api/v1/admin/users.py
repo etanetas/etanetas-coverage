@@ -3,11 +3,12 @@ import secrets
 import uuid
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.pagination import Page, PaginationParams, pagination_params
+from app.api.responses import created
 from app.audit import log_action
 from app.auth import get_current_user, require_role
 from app.config import settings
@@ -61,7 +62,8 @@ async def create_user(
     body: UserCreate,
     current_user: Annotated[User, Depends(require_role("admin"))],
     db: Annotated[AsyncSession, Depends(get_db)],
-) -> User:
+    response: Response,
+) -> UserOut:
     existing = await db.execute(select(User).where(User.username == body.username))
     if existing.scalar_one_or_none() is not None:
         raise HTTPException(status_code=409, detail="Username already exists")
@@ -73,7 +75,11 @@ async def create_user(
                      {"username": body.username, "role": body.role})
     await db.commit()
     await db.refresh(user)
-    return user
+    return created(
+        UserOut.model_validate(user),
+        location=f"/api/v1/admin/users/{user.id}",
+        response=response,
+    )
 
 
 @router.patch("/users/{user_id}", response_model=UserOut)
@@ -152,6 +158,7 @@ async def create_api_key(
     body: ApiKeyCreate,
     current_user: Annotated[User, Depends(require_role("admin"))],
     db: Annotated[AsyncSession, Depends(get_db)],
+    response: Response,
 ) -> ApiKeyCreated:
     await _require_user(db, user_id)
 
@@ -168,6 +175,7 @@ async def create_api_key(
     )
     await db.commit()
     await db.refresh(api_key)
+    response.headers["Cache-Control"] = "no-store"
 
     return ApiKeyCreated(
         id=api_key.id,

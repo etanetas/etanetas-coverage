@@ -36,8 +36,8 @@ async def test_search_returns_list(client, seed_address):
     resp = await client.get("/api/v1/public/addresses/search?q=Testinė")
     assert resp.status_code == 200
     data = resp.json()
-    assert isinstance(data, list)
-    assert any(r["rc_code"] == seed_address for r in data)
+    assert "items" in data and isinstance(data["items"], list)
+    assert any(r["rc_code"] == seed_address for r in data["items"])
 
 
 @pytest.mark.integration
