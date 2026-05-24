@@ -243,7 +243,8 @@ async def test_rollback_removes_offerings(client, editor_user, locality_code, te
         f"/api/v1/admin/bulk/{bulk_op_id}/rollback",
         headers={"X-API-Key": raw},
     )
-    assert rollback_resp.status_code == 204
+    assert rollback_resp.status_code == 200
+    assert rollback_resp.json()["rolled_back_count"] >= 0
 
     # Verify offerings removed
     for rc in [82199901, 82199902, 82199903]:
@@ -379,3 +380,75 @@ async def test_bulk_preview_rejects_over_cap(client, editor_user, locality_code,
     )
     assert resp.status_code == 422
     assert resp.json()["error"]["code"] == "BULK_LIMIT_EXCEEDED"
+
+
+# ---------------------------------------------------------------------------
+# T9.2 / T9.3 / T9.4 regression tests
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.integration
+async def test_preview_response_has_expires_at_and_no_store(client, editor_user, tech, locality_code):
+    _, raw = editor_user
+    payload = {
+        "operation": _op(tech.id),
+        "filter": {"locality_code": locality_code},
+    }
+    resp = await client.post(
+        "/api/v1/admin/bulk/preview",
+        json=payload,
+        headers={"X-API-Key": raw},
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert "expires_at" in body
+    assert body["expires_at"] is not None
+    assert resp.headers["cache-control"] == "no-store"
+
+
+@pytest.mark.integration
+async def test_bulk_execute_sets_location_header(client, editor_user, tech, locality_code):
+    _, raw = editor_user
+    preview = await client.post(
+        "/api/v1/admin/bulk/preview",
+        json={"operation": _op(tech.id), "filter": {"locality_code": locality_code}},
+        headers={"X-API-Key": raw},
+    )
+    exec_resp = await client.post(
+        "/api/v1/admin/bulk/execute",
+        json={"preview_token": preview.json()["preview_token"]},
+        headers={"X-API-Key": raw},
+    )
+    assert exec_resp.status_code == 201
+    assert exec_resp.headers["location"].startswith("/api/v1/admin/bulk-operations/")
+
+
+@pytest.mark.integration
+async def test_bulk_operation_detail_endpoint(client, editor_user, tech, locality_code):
+    _, raw = editor_user
+    preview = await client.post(
+        "/api/v1/admin/bulk/preview",
+        json={"operation": _op(tech.id), "filter": {"locality_code": locality_code}},
+        headers={"X-API-Key": raw},
+    )
+    exec_resp = await client.post(
+        "/api/v1/admin/bulk/execute",
+        json={"preview_token": preview.json()["preview_token"]},
+        headers={"X-API-Key": raw},
+    )
+    op_id = exec_resp.json()["bulk_operation_id"]
+
+    detail = await client.get(f"/api/v1/admin/bulk-operations/{op_id}", headers={"X-API-Key": raw})
+    assert detail.status_code == 200
+    assert detail.json()["id"] == op_id
+
+
+@pytest.mark.integration
+async def test_bulk_operation_detail_404(client, admin_user):
+    import uuid
+    _, raw = admin_user
+    resp = await client.get(
+        f"/api/v1/admin/bulk-operations/{uuid.uuid4()}",
+        headers={"X-API-Key": raw},
+    )
+    assert resp.status_code == 404

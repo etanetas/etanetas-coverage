@@ -315,6 +315,7 @@ class BulkPreviewResponse(BaseModel):
     affected_count: int
     sample: list[BulkSampleItem]
     preview_token: str | None
+    expires_at: datetime | None = None
 
 
 class BulkExecuteRequest(BaseModel):
@@ -336,6 +337,14 @@ class BulkOperationOut(BaseModel):
     rolled_back_at: datetime | None
 
     model_config = {"from_attributes": True}
+
+
+class BulkOperationDetailOut(BulkOperationOut):
+    filter_criteria: dict | None = None
+
+
+class BulkRollbackResponse(BaseModel):
+    rolled_back_count: int
 
 
 class AuditLogOut(BaseModel):

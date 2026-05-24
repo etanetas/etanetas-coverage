@@ -5,12 +5,13 @@ import uuid
 from datetime import date, timedelta
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from sqlalchemy import delete, select, text
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.pagination import Page, PaginationParams, pagination_params
+from app.api.responses import created
 from app.audit import log_action
 from app.auth import require_role
 from app.dependencies import get_db
@@ -29,9 +30,11 @@ from app.schemas.admin import (
     BulkExecuteRequest,
     BulkExecuteResponse,
     BulkFilter,
+    BulkOperationDetailOut,
     BulkOperationOut,
     BulkPreviewRequest,
     BulkPreviewResponse,
+    BulkRollbackResponse,
     BulkSampleItem,
     ChangeOfferingOperation,
     RemoveOfferingOperation,
@@ -48,11 +51,14 @@ _MAX_BULK_AFFECTED = 10_000
 async def bulk_preview(
     request: Request,
     body: BulkPreviewRequest,
+    response: Response,
     current_user: Annotated[User, Depends(require_role("editor", "admin"))],
     db: Annotated[AsyncSession, Depends(get_db)],
 ) -> BulkPreviewResponse:
     if body.filter.is_empty():
         raise HTTPException(status_code=422, detail="At least one filter field is required")
+
+    response.headers["Cache-Control"] = "no-store"
 
     rc_codes = await _filter_addresses(db, body.filter)
     if not rc_codes:
@@ -61,6 +67,7 @@ async def bulk_preview(
     sample = await _build_sample(db, rc_codes[:5], body.operation)
 
     token = "tmp_" + secrets.token_urlsafe(16)
+    expires_at = now() + timedelta(minutes=5)
     token_row = BulkPreviewToken(
         token=token,
         user_id=current_user.id,
@@ -70,7 +77,7 @@ async def bulk_preview(
             "filter": body.filter.model_dump(mode="json"),
             "rc_codes": rc_codes,
         },
-        expires_at=now() + timedelta(minutes=5),
+        expires_at=expires_at,
     )
     db.add(token_row)
     await db.execute(
@@ -78,7 +85,12 @@ async def bulk_preview(
     )
     await db.commit()
 
-    return BulkPreviewResponse(affected_count=len(rc_codes), sample=sample, preview_token=token)
+    return BulkPreviewResponse(
+        affected_count=len(rc_codes),
+        sample=sample,
+        preview_token=token,
+        expires_at=expires_at,
+    )
 
 
 @router.post("/bulk/execute", response_model=BulkExecuteResponse, status_code=201)
@@ -86,6 +98,7 @@ async def bulk_preview(
 async def bulk_execute(
     request: Request,
     body: BulkExecuteRequest,
+    response: Response,
     current_user: Annotated[User, Depends(require_role("editor", "admin"))],
     db: Annotated[AsyncSession, Depends(get_db)],
 ) -> BulkExecuteResponse:
@@ -154,15 +167,19 @@ async def bulk_execute(
     )
     await db.commit()
 
-    return BulkExecuteResponse(bulk_operation_id=bulk_op.id, modified_count=len(modified))
+    return created(
+        BulkExecuteResponse(bulk_operation_id=bulk_op.id, modified_count=len(modified)),
+        location=f"/api/v1/admin/bulk-operations/{bulk_op.id}",
+        response=response,
+    )
 
 
-@router.post("/bulk/{bulk_op_id}/rollback", status_code=204)
+@router.post("/bulk/{bulk_op_id}/rollback", response_model=BulkRollbackResponse)
 async def bulk_rollback(
     bulk_op_id: uuid.UUID,
     current_user: Annotated[User, Depends(require_role("editor", "admin"))],
     db: Annotated[AsyncSession, Depends(get_db)],
-) -> None:
+) -> BulkRollbackResponse:
     result = await db.execute(select(BulkOperations).where(BulkOperations.id == bulk_op_id))
     bulk_op = result.scalar_one_or_none()
     if bulk_op is None:
@@ -247,6 +264,7 @@ async def bulk_rollback(
         {"rolled_back_count": affected, "type": rd_type},
     )
     await db.commit()
+    return BulkRollbackResponse(rolled_back_count=affected)
 
 
 @router.get("/bulk-operations", response_model=Page[BulkOperationOut])
@@ -274,6 +292,34 @@ async def list_bulk_operations(
     return Page[BulkOperationOut](
         total=total, items=[BulkOperationOut(**r) for r in rows]
     )
+
+
+@router.get(
+    "/bulk-operations/{op_id}",
+    response_model=BulkOperationDetailOut,
+    summary="Get a single bulk operation",
+)
+async def get_bulk_operation(
+    op_id: uuid.UUID,
+    current_user: Annotated[User, Depends(require_role("viewer", "editor", "admin"))],
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> BulkOperationDetailOut:
+    row = (
+        await db.execute(
+            text("""
+                SELECT bo.id, bo.user_id, u.username, bo.operation_type,
+                       bo.affected_count, bo.created_at, bo.rolled_back_at,
+                       bo.filter_criteria
+                FROM bulk_operations bo
+                LEFT JOIN users u ON u.id = bo.user_id
+                WHERE bo.id = :id
+            """),
+            {"id": str(op_id)},
+        )
+    ).mappings().first()
+    if row is None:
+        raise_error(404, "NOT_FOUND", "Bulk operation not found")
+    return BulkOperationDetailOut(**row)
 
 
 # ---------------------------------------------------------------------------
