@@ -7,7 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.dependencies import get_db
 from app.limiter import limiter
-from app.schemas.public import AddressInfo, AddressSearchResult, AvailabilityResponse
+from app.schemas.public import AddressInfo, AddressSearchResult, AvailabilityResponse, PublicAddressSearchResponse
 
 from app.db.address_labels import _ADDR_JOINS, _FULL_ADDRESS, _HOUSE, _LOCALITY_LABEL, _MUNI_SHORT, _STREET_WITH_TYPE  # noqa: F401
 
@@ -94,15 +94,15 @@ _AVAILABILITY_SQL = text("""
 """)
 
 
-@router.get("/search", response_model=list[AddressSearchResult])
+@router.get("/search", response_model=PublicAddressSearchResponse)
 @limiter.limit("60/minute")
 async def search_addresses(
     request: Request,
     q: Annotated[str, Query(min_length=2, max_length=100, description="Address search query")],
     db: Annotated[AsyncSession, Depends(get_db)],
-) -> list[AddressSearchResult]:
+) -> PublicAddressSearchResponse:
     rows = (await db.execute(_SEARCH_SQL, {"q": q})).mappings().all()
-    return [AddressSearchResult(**row) for row in rows]
+    return PublicAddressSearchResponse(items=[AddressSearchResult(**row) for row in rows])
 
 
 @router.get("/{rc_code}/availability", response_model=AvailabilityResponse)

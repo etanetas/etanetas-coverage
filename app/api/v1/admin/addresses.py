@@ -151,18 +151,35 @@ class ZoneCoverageItem(BaseModel):
     offerings: list[ZoneOfferingOut]
 
 
-@router.get("/{rc_code}/zone-coverage", response_model=list[ZoneCoverageItem])
+@router.get("/{rc_code}/zone-coverage", response_model=Page[ZoneCoverageItem])
 async def get_address_zone_coverage(
     rc_code: int,
     current_user: Annotated[User, Depends(require_role("viewer", "editor", "admin"))],
     db: Annotated[AsyncSession, Depends(get_db)],
-) -> list[ZoneCoverageItem]:
+    page: Annotated[PaginationParams, Depends(pagination_params)],
+) -> Page[ZoneCoverageItem]:
     """Return zones whose polygon contains this address point, with their offerings."""
     addr = await db.execute(
         select(Address.rc_code).where(Address.rc_code == rc_code, Address.deleted_at.is_(None))
     )
     if addr.scalar_one_or_none() is None:
         raise HTTPException(status_code=404, detail="Address not found")
+
+    total = int(
+        (
+            await db.execute(
+                text("""
+                    SELECT COUNT(DISTINCT sz.id)
+                    FROM addresses a
+                    JOIN service_zones sz ON sz.polygon IS NOT NULL
+                        AND ST_Contains(sz.polygon::geometry, a.point::geometry)
+                    WHERE a.rc_code = :rc_code AND a.deleted_at IS NULL
+                """),
+                {"rc_code": rc_code},
+            )
+        ).scalar()
+        or 0
+    )
 
     rows = (await db.execute(text("""
         SELECT
@@ -181,12 +198,19 @@ async def get_address_zone_coverage(
             zo.created_at,
             zo.updated_at
         FROM addresses a
-        JOIN service_zones sz ON sz.polygon IS NOT NULL
-            AND ST_Contains(sz.polygon::geometry, a.point::geometry)
+        JOIN (
+            SELECT sz2.id, sz2.name, sz2.priority
+            FROM service_zones sz2
+            JOIN addresses a2 ON sz2.polygon IS NOT NULL
+                AND ST_Contains(sz2.polygon::geometry, a2.point::geometry)
+            WHERE a2.rc_code = :rc_code AND a2.deleted_at IS NULL
+            ORDER BY sz2.priority DESC, sz2.name
+            LIMIT :limit OFFSET :offset
+        ) sz ON TRUE
         LEFT JOIN zone_offerings zo ON zo.zone_id = sz.id
         WHERE a.rc_code = :rc_code AND a.deleted_at IS NULL
         ORDER BY sz.priority DESC, sz.name
-    """), {"rc_code": rc_code})).mappings().all()
+    """), {"rc_code": rc_code, "limit": page.limit, "offset": page.offset})).mappings().all()
 
     by_zone: dict[uuid.UUID, ZoneCoverageItem] = {}
     for row in rows:
@@ -214,7 +238,7 @@ async def get_address_zone_coverage(
                     updated_at=row["updated_at"],
                 )
             )
-    return list(by_zone.values())
+    return Page[ZoneCoverageItem](total=total, items=list(by_zone.values()))
 
 
 @router.get("/{rc_code}/offerings", response_model=Page[AddressOfferingOut])

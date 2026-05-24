@@ -9,6 +9,10 @@ class AddressSearchResult(BaseModel):
     postal_code: str | None
 
 
+class PublicAddressSearchResponse(BaseModel):
+    items: list[AddressSearchResult]
+
+
 class AddressInfo(BaseModel):
     rc_code: int
     full_address: str
