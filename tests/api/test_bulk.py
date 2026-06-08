@@ -452,3 +452,118 @@ async def test_bulk_operation_detail_404(client, admin_user):
         headers={"X-API-Key": raw},
     )
     assert resp.status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# Per-address history populated by bulk operations (regression for address_code=NULL bug)
+# ---------------------------------------------------------------------------
+
+@pytest.mark.integration
+async def test_bulk_add_populates_address_history(client, editor_user, admin_user, locality_code, tech):
+    """Bulk add_offering must set address_code in audit_log so per-address history is non-empty."""
+    _, editor_raw = editor_user
+    _, admin_raw = admin_user
+
+    preview = await client.post(
+        "/api/v1/admin/bulk/preview",
+        json={"operation": _op(tech.id), "filter": {"locality_code": locality_code}},
+        headers={"X-API-Key": editor_raw},
+    )
+    await client.post(
+        "/api/v1/admin/bulk/execute",
+        json={"preview_token": preview.json()["preview_token"]},
+        headers={"X-API-Key": editor_raw},
+    )
+
+    for rc in [82199901, 82199902, 82199903]:
+        history = await client.get(
+            f"/api/v1/admin/addresses/{rc}/history",
+            headers={"X-API-Key": admin_raw},
+        )
+        assert history.status_code == 200
+        entries = history.json()["items"]
+        assert any(e["action"] == "create" for e in entries), f"no create entry for rc_code={rc}"
+
+
+@pytest.mark.integration
+async def test_bulk_change_populates_address_history(client, editor_user, admin_user, locality_code, tech):
+    """Bulk change_offering must set address_code in audit_log so per-address history is non-empty."""
+    _, editor_raw = editor_user
+    _, admin_raw = admin_user
+
+    # First add offerings so we can change them
+    p1 = await client.post(
+        "/api/v1/admin/bulk/preview",
+        json={"operation": _op(tech.id), "filter": {"locality_code": locality_code}},
+        headers={"X-API-Key": editor_raw},
+    )
+    await client.post(
+        "/api/v1/admin/bulk/execute",
+        json={"preview_token": p1.json()["preview_token"]},
+        headers={"X-API-Key": editor_raw},
+    )
+
+    change_op = {
+        "type": "change_offering",
+        "technology_id": str(tech.id),
+        "new_status": "planned",
+    }
+    p2 = await client.post(
+        "/api/v1/admin/bulk/preview",
+        json={"operation": change_op, "filter": {"locality_code": locality_code}},
+        headers={"X-API-Key": editor_raw},
+    )
+    await client.post(
+        "/api/v1/admin/bulk/execute",
+        json={"preview_token": p2.json()["preview_token"]},
+        headers={"X-API-Key": editor_raw},
+    )
+
+    for rc in [82199901, 82199902, 82199903]:
+        history = await client.get(
+            f"/api/v1/admin/addresses/{rc}/history",
+            headers={"X-API-Key": admin_raw},
+        )
+        assert history.status_code == 200
+        entries = history.json()["items"]
+        assert any(e["action"] == "update" for e in entries), f"no update entry for rc_code={rc}"
+
+
+@pytest.mark.integration
+async def test_bulk_remove_populates_address_history(client, editor_user, admin_user, locality_code, tech):
+    """Bulk remove_offering must set address_code in audit_log so per-address history is non-empty."""
+    _, editor_raw = editor_user
+    _, admin_raw = admin_user
+
+    # Add offerings first
+    p1 = await client.post(
+        "/api/v1/admin/bulk/preview",
+        json={"operation": _op(tech.id), "filter": {"locality_code": locality_code}},
+        headers={"X-API-Key": editor_raw},
+    )
+    await client.post(
+        "/api/v1/admin/bulk/execute",
+        json={"preview_token": p1.json()["preview_token"]},
+        headers={"X-API-Key": editor_raw},
+    )
+
+    remove_op = {"type": "remove_offering", "technology_id": str(tech.id)}
+    p2 = await client.post(
+        "/api/v1/admin/bulk/preview",
+        json={"operation": remove_op, "filter": {"locality_code": locality_code}},
+        headers={"X-API-Key": editor_raw},
+    )
+    await client.post(
+        "/api/v1/admin/bulk/execute",
+        json={"preview_token": p2.json()["preview_token"]},
+        headers={"X-API-Key": editor_raw},
+    )
+
+    for rc in [82199901, 82199902, 82199903]:
+        history = await client.get(
+            f"/api/v1/admin/addresses/{rc}/history",
+            headers={"X-API-Key": admin_raw},
+        )
+        assert history.status_code == 200
+        entries = history.json()["items"]
+        assert any(e["action"] == "delete" for e in entries), f"no delete entry for rc_code={rc}"

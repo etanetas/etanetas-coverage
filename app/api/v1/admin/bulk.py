@@ -504,14 +504,15 @@ async def _execute_add_offering(
         diff_json = json.dumps({"bulk_operation_id": str(bulk_op_id), "status": op.status})
         await db.execute(
             text("""
-                INSERT INTO audit_log (user_id, entity_type, entity_id, action, diff, at)
+                INSERT INTO audit_log (user_id, entity_type, entity_id, action, diff, at, address_code)
                 SELECT
                     CAST(:user_id AS uuid),
                     'address_offering',
                     CAST(ao.id AS text),
                     'create',
                     CAST(:diff AS jsonb),
-                    NOW()
+                    NOW(),
+                    ao.address_code
                 FROM address_offerings ao
                 WHERE ao.bulk_operation_id = CAST(:bulk_op_id AS uuid)
             """),
@@ -590,6 +591,40 @@ async def _execute_change_offering(
         """)
         await db.execute(sql, params)
 
+    # Batch audit entries for changed offerings
+    if modified_codes:
+        changes: dict = {}
+        if op.new_status is not None:
+            changes["status"] = op.new_status
+        if op.new_max_dl_mbps is not None:
+            changes["max_download_mbps"] = op.new_max_dl_mbps
+        if op.new_max_ul_mbps is not None:
+            changes["max_upload_mbps"] = op.new_max_ul_mbps
+        if op.new_status_since is not None:
+            changes["status_since"] = op.new_status_since.isoformat()
+        if op.new_planned_until is not None:
+            changes["planned_until"] = op.new_planned_until.isoformat()
+        if op.new_notes is not None:
+            changes["notes"] = op.new_notes
+        diff_json = json.dumps({"bulk_operation_id": str(bulk_op_id), **changes})
+        await db.execute(
+            text("""
+                INSERT INTO audit_log (user_id, entity_type, entity_id, action, diff, at, address_code)
+                SELECT
+                    CAST(:user_id AS uuid),
+                    'address_offering',
+                    CAST(ao.id AS text),
+                    'update',
+                    CAST(:diff AS jsonb),
+                    NOW(),
+                    ao.address_code
+                FROM address_offerings ao
+                WHERE ao.address_code = ANY(:codes)
+                  AND ao.technology_id = CAST(:tech_id AS uuid)
+            """),
+            {"user_id": str(user_id), "codes": modified_codes, "tech_id": str(op.technology_id), "diff": diff_json},
+        )
+
     return modified_codes, old_values
 
 
@@ -629,6 +664,26 @@ async def _execute_remove_offering(
         for r in existing
     ]
     deleted_codes = [int(r["address_code"]) for r in existing]
+
+    # Batch audit entries for deleted offerings (before DELETE so we can join for IDs)
+    diff_json = json.dumps({"bulk_operation_id": str(bulk_op_id), "technology_id": str(op.technology_id)})
+    await db.execute(
+        text("""
+            INSERT INTO audit_log (user_id, entity_type, entity_id, action, diff, at, address_code)
+            SELECT
+                CAST(:user_id AS uuid),
+                'address_offering',
+                CAST(ao.id AS text),
+                'delete',
+                CAST(:diff AS jsonb),
+                NOW(),
+                ao.address_code
+            FROM address_offerings ao
+            WHERE ao.address_code = ANY(:codes)
+              AND ao.technology_id = CAST(:tech_id AS uuid)
+        """),
+        {"user_id": str(user_id), "codes": deleted_codes, "tech_id": str(op.technology_id), "diff": diff_json},
+    )
 
     await db.execute(
         text("""
