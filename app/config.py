@@ -22,6 +22,32 @@ class Settings(BaseSettings):
         "Vilniaus rajono",
         "Šalčininkų rajono",
     ]
+    stats_locality_codes: list[int] = []
+    stats_locality_names: list[str] = [
+        "Šalčininkai",
+        "Vilnius",
+        "Skaidiškės",
+        "Jašiūnai",
+        "Pagiriai",
+        "Eišiškės",
+        "Salininkai",
+        "Dieveniškės",
+        "Butrimonys",
+        "Kalesnikai",
+        "Murlinė",
+        "Gudeliai",
+        "Gojus",
+        "Didieji Baušiai",
+        "Šalčininkų Tartokas",
+        "Turgeliai",
+        "Zavišonys",
+        "Didžiasalis",
+        "Talkotiškės",
+        "Stankutiškės",
+        "Daržininkai",
+        "Rudamina",
+        "Parapijoniškės",
+    ]
 
     @field_validator("stats_municipality_codes", mode="before")
     @classmethod
@@ -33,6 +59,20 @@ class Settings(BaseSettings):
     @field_validator("stats_municipality_names", mode="before")
     @classmethod
     def _parse_stats_municipality_names(cls, value: object) -> object:
+        if isinstance(value, str):
+            return [item.strip() for item in value.split(",") if item.strip()]
+        return value
+
+    @field_validator("stats_locality_codes", mode="before")
+    @classmethod
+    def _parse_stats_locality_codes(cls, value: object) -> object:
+        if isinstance(value, str):
+            return [int(item.strip()) for item in value.split(",") if item.strip()]
+        return value
+
+    @field_validator("stats_locality_names", mode="before")
+    @classmethod
+    def _parse_stats_locality_names(cls, value: object) -> object:
         if isinstance(value, str):
             return [item.strip() for item in value.split(",") if item.strip()]
         return value

@@ -5,6 +5,7 @@ import secrets
 import bcrypt
 import pytest
 from httpx import ASGITransport, AsyncClient
+from sqlalchemy import text
 
 from app.config import settings
 from app.dependencies import get_db
@@ -36,8 +37,22 @@ async def admin_user(db_session):
     return user, raw
 
 
+@pytest.fixture
+async def seed_operational_area(db_session, monkeypatch):
+    """Seed one municipality + locality and point settings at them."""
+    for stmt in [
+        "INSERT INTO counties (rc_code, name, synced_at) VALUES (99001, 'Test County', NOW()) ON CONFLICT DO NOTHING",
+        "INSERT INTO municipalities (rc_code, county_code, name, type, synced_at) VALUES (99100, 99001, 'Test Municipality', 'rajono', NOW()) ON CONFLICT DO NOTHING",
+        "INSERT INTO localities (rc_code, muni_code, name, type, synced_at) VALUES (99200, 99100, 'Test Locality', 'miestas', NOW()) ON CONFLICT DO NOTHING",
+    ]:
+        await db_session.execute(text(stmt))
+    monkeypatch.setattr(settings, "stats_locality_codes", [])
+    monkeypatch.setattr(settings, "stats_locality_names", ["Test Locality"])
+    return {"muni_code": 99100, "locality_code": 99200}
+
+
 @pytest.mark.asyncio
-async def test_coverage_stats_operational_scope(client: AsyncClient, admin_user: tuple) -> None:
+async def test_coverage_stats_operational_scope(client: AsyncClient, admin_user: tuple, seed_operational_area) -> None:
     _, raw = admin_user
     resp = await client.get(
         "/api/v1/admin/coverage/stats",
@@ -67,11 +82,14 @@ async def test_coverage_stats_all_scope(client: AsyncClient, admin_user: tuple) 
 
 
 @pytest.mark.asyncio
-async def test_coverage_stats_operational_muni_codes_match_rc(client: AsyncClient, admin_user: tuple) -> None:
+async def test_coverage_stats_operational_muni_codes_match_rc(client: AsyncClient, admin_user: tuple, seed_operational_area, monkeypatch) -> None:
+    muni_code = seed_operational_area["muni_code"]
+    monkeypatch.setattr(settings, "stats_locality_names", [])
+    monkeypatch.setattr(settings, "stats_locality_codes", [])
     _, raw = admin_user
     resp = await client.get(
         "/api/v1/admin/coverage/stats",
-        params={"scope": "operational", "muni_codes": settings.stats_municipality_codes},
+        params={"scope": "operational", "muni_codes": [muni_code]},
         headers={"X-API-Key": raw},
     )
     assert resp.status_code == 200, resp.text

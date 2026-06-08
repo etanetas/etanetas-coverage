@@ -18,57 +18,97 @@ router = APIRouter(prefix="/api/v1/admin/coverage", tags=["admin-stats"])
 StatsScope = Literal["operational", "all"]
 
 
-async def _resolve_muni_codes(
+async def _resolve_scope(
     db: AsyncSession,
     *,
     scope: StatsScope,
     muni_codes: list[int] | None,
-) -> tuple[list[int] | None, list[str], str]:
+) -> tuple[str, dict, list[str], str]:
+    """Return (address_filter_sql, params, display_names, scope_label).
+
+    address_filter_sql is appended to WHERE clauses where 'addresses a' is present.
+    Returns ("", {}, [], label) for scope="all".
+    """
     if scope == "all":
-        return None, [], "All Lithuania"
+        return "", {}, [], "All Lithuania"
 
+    # Manual municipality override via query param
     if muni_codes:
-        codes_to_resolve = muni_codes
-    else:
-        codes_to_resolve = settings.stats_municipality_codes
+        rows = (
+            await db.execute(
+                text("SELECT rc_code, name FROM municipalities WHERE rc_code = ANY(:codes) ORDER BY name"),
+                {"codes": muni_codes},
+            )
+        ).mappings().all()
+        if not rows:
+            raise HTTPException(status_code=400, detail="No municipalities found for the given codes")
+        names = [str(row["name"]) for row in rows]
+        codes = [int(row["rc_code"]) for row in rows]
+        return (
+            """
+            AND EXISTS (
+                SELECT 1 FROM localities l
+                WHERE l.rc_code = a.locality_code
+                  AND l.muni_code = ANY(:muni_codes)
+            )
+            """,
+            {"muni_codes": codes},
+            names,
+            "Selected municipalities",
+        )
 
+    # Locality-scoped operational area (preferred when configured)
+    if settings.stats_locality_codes or settings.stats_locality_names:
+        rows = []
+        if settings.stats_locality_codes:
+            rows = (
+                await db.execute(
+                    text("SELECT rc_code, name FROM localities WHERE rc_code = ANY(:codes) ORDER BY name"),
+                    {"codes": settings.stats_locality_codes},
+                )
+            ).mappings().all()
+        if not rows:
+            rows = (
+                await db.execute(
+                    text("SELECT rc_code, name FROM localities WHERE name = ANY(:names) ORDER BY name"),
+                    {"names": settings.stats_locality_names},
+                )
+            ).mappings().all()
+        if not rows:
+            raise_error(503, "SERVICE_UNAVAILABLE", "Operational area not configured")
+        names = [str(row["name"]) for row in rows]
+        codes = [int(row["rc_code"]) for row in rows]
+        return "AND a.locality_code = ANY(:locality_codes)", {"locality_codes": codes}, names, "Operational area"
+
+    # Municipality-scoped operational area (legacy fallback)
     rows = (
         await db.execute(
             text("SELECT rc_code, name FROM municipalities WHERE rc_code = ANY(:codes) ORDER BY name"),
-            {"codes": codes_to_resolve},
+            {"codes": settings.stats_municipality_codes},
         )
     ).mappings().all()
-
-    if not rows and not muni_codes:
+    if not rows:
         rows = (
             await db.execute(
                 text("SELECT rc_code, name FROM municipalities WHERE name = ANY(:names) ORDER BY name"),
                 {"names": settings.stats_municipality_names},
             )
         ).mappings().all()
-
     if not rows:
-        if muni_codes:
-            raise HTTPException(status_code=400, detail="No municipalities found for the given codes")
         raise_error(503, "SERVICE_UNAVAILABLE", "Operational area not configured")
     names = [str(row["name"]) for row in rows]
     codes = [int(row["rc_code"]) for row in rows]
-    label = "Selected municipalities" if muni_codes else "Operational area"
-    return codes, names, label
-
-
-def _scoped_address_filter(muni_codes: list[int] | None) -> tuple[str, dict]:
-    if muni_codes is None:
-        return "", {}
     return (
         """
-          AND EXISTS (
+        AND EXISTS (
             SELECT 1 FROM localities l
             WHERE l.rc_code = a.locality_code
               AND l.muni_code = ANY(:muni_codes)
-          )
+        )
         """,
-        {"muni_codes": muni_codes},
+        {"muni_codes": codes},
+        names,
+        "Operational area",
     )
 
 
@@ -82,12 +122,9 @@ async def get_coverage_stats(
 ) -> CoverageStats:
     """High-level coverage metrics for dashboard."""
 
-    resolved_codes, municipality_names, scope_label = await _resolve_muni_codes(
-        db,
-        scope=scope,
-        muni_codes=muni_codes,
+    address_filter, address_params, scope_names, scope_label = await _resolve_scope(
+        db, scope=scope, muni_codes=muni_codes
     )
-    address_filter, address_params = _scoped_address_filter(resolved_codes)
 
     total_buildings = await db.scalar(
         text(f"""
@@ -122,21 +159,17 @@ async def get_coverage_stats(
         address_params,
     ) or 0
 
-    if resolved_codes is None:
+    if scope == "all":
         address_offerings = await db.scalar(text("SELECT COUNT(*) FROM address_offerings")) or 0
     else:
         address_offerings = await db.scalar(
-            text("""
+            text(f"""
             SELECT COUNT(*)
             FROM address_offerings ao
             JOIN addresses a ON a.rc_code = ao.address_code
             WHERE a.address_type = 'building'
               AND a.deleted_at IS NULL
-              AND EXISTS (
-                SELECT 1 FROM localities l
-                WHERE l.rc_code = a.locality_code
-                  AND l.muni_code = ANY(:muni_codes)
-              )
+              {address_filter}
         """),
             address_params,
         ) or 0
@@ -151,7 +184,7 @@ async def get_coverage_stats(
         WHERE z.deleted_at IS NULL
     """)) or 0
 
-    if resolved_codes is None:
+    if scope == "all":
         status_rows = (
             await db.execute(
                 text("""
@@ -167,17 +200,13 @@ async def get_coverage_stats(
     else:
         status_rows = (
             await db.execute(
-                text("""
+                text(f"""
             SELECT status, COUNT(*) AS count
             FROM address_offerings ao
             JOIN addresses a ON a.rc_code = ao.address_code
             WHERE a.address_type = 'building'
               AND a.deleted_at IS NULL
-              AND EXISTS (
-                SELECT 1 FROM localities l
-                WHERE l.rc_code = a.locality_code
-                  AND l.muni_code = ANY(:muni_codes)
-              )
+              {address_filter}
             GROUP BY status
             ORDER BY count DESC
         """),
@@ -228,5 +257,5 @@ async def get_coverage_stats(
         top_uncovered_localities=[UncoveredLocality(**r) for r in uncov_rows],
         scope=scope,
         scope_label=scope_label,
-        scope_municipalities=municipality_names,
+        scope_municipalities=scope_names,
     )
