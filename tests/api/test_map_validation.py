@@ -65,3 +65,16 @@ async def test_map_addresses_accepts_max_limit(client, admin):
     )
     # Should not be rejected for limit (may be 200 or other error unrelated to limit)
     assert resp.status_code != 422
+
+
+@pytest.mark.integration
+async def test_map_addresses_accepts_gzip_encoding(client, admin):
+    _, raw = admin
+    resp = await client.get(
+        "/api/v1/admin/map/addresses",
+        params={"bbox": "25.0,54.0,26.0,55.0"},
+        headers={"X-API-Key": raw, "Accept-Encoding": "gzip"},
+    )
+    # Middleware must not break the endpoint; empty bbox = small response = no compression
+    assert resp.status_code == 200
+    assert "application/json" in resp.headers["content-type"]
