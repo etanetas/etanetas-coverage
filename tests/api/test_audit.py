@@ -129,6 +129,37 @@ async def test_audit_log_viewer_forbidden(client, editor_user):
     assert resp.status_code == 403
 
 
+from app.db.audit_helpers import address_label_for_code, technology_display_name
+import uuid as _uuid
+
+
+@pytest.mark.integration
+async def test_address_label_for_code_returns_label(db_session, seed_address):
+    label = await address_label_for_code(db_session, seed_address)
+    assert label is not None
+    assert "1" in label        # house_no from seed_address fixture
+    assert "Auditinkai" in label
+
+
+@pytest.mark.integration
+async def test_address_label_for_code_unknown_returns_none(db_session):
+    label = await address_label_for_code(db_session, 999999999)
+    assert label is None
+
+
+@pytest.mark.integration
+async def test_technology_display_name_returns_name(db_session, seed_tech):
+    _, tech = seed_tech
+    name = await technology_display_name(db_session, tech.id)
+    assert name == "AuditVariant"
+
+
+@pytest.mark.integration
+async def test_technology_display_name_unknown_returns_none(db_session):
+    name = await technology_display_name(db_session, _uuid.uuid4())
+    assert name is None
+
+
 @pytest.mark.integration
 async def test_audit_log_filter_by_entity_type(client, admin_user, seed_tech):
     _, admin_raw = admin_user
