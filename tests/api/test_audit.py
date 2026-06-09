@@ -159,6 +159,30 @@ async def test_technology_display_name_unknown_returns_none(db_session):
 
 
 @pytest.mark.integration
+async def test_audit_diff_contains_enriched_fields(client, editor_user, admin_user, seed_address, seed_tech):
+    _, editor_raw = editor_user
+    _, admin_raw = admin_user
+    _, tech = seed_tech
+
+    await client.post(
+        f"/api/v1/admin/addresses/{seed_address}/offerings",
+        json={"technology_id": str(tech.id), "status": "available",
+              "max_download_mbps": 100, "max_upload_mbps": 50, "status_since": "2026-01-01"},
+        headers={"X-API-Key": editor_raw},
+    )
+
+    resp = await client.get(
+        "/api/v1/admin/audit-log",
+        params={"entity_type": "address_offering"},
+        headers={"X-API-Key": admin_raw},
+    )
+    entry = next(e for e in resp.json()["items"] if e["action"] == "create")
+    assert entry["diff"]["technology_name"] == "AuditVariant"
+    assert "1" in entry["diff"]["address_label"]
+    assert "Auditinkai" in entry["diff"]["address_label"]
+
+
+@pytest.mark.integration
 async def test_audit_log_filter_by_entity_type(client, admin_user, seed_tech):
     _, admin_raw = admin_user
     _, tech = seed_tech

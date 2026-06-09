@@ -18,6 +18,7 @@ from app.db.address_labels import (  # noqa: F401
     _MUNI_SHORT,
     _STREET_WITH_TYPE,
 )
+from app.db.audit_helpers import address_label_for_code, technology_display_name
 from app.db.filter_builder import build_where
 from app.dependencies import get_db
 from app.models.address import Address
@@ -297,13 +298,15 @@ async def create_address_offering(
     )
     db.add(offering)
     await db.flush()
+    tech_name = await technology_display_name(db, body.technology_id)
+    addr_label = await address_label_for_code(db, rc_code)
     await log_action(
         db,
         current_user.id,
         "address_offering",
         str(offering.id),
         "create",
-        {"address_code": rc_code, **body.model_dump()},
+        {"address_code": rc_code, "technology_name": tech_name, "address_label": addr_label, **body.model_dump()},
         address_code=rc_code,
     )
     await db.commit()
@@ -329,13 +332,15 @@ async def update_address_offering(
         setattr(offering, field, value)
     offering.updated_at = now()
 
+    tech_name = await technology_display_name(db, offering.technology_id)
+    addr_label = await address_label_for_code(db, offering.address_code)
     await log_action(
         db,
         current_user.id,
         "address_offering",
         str(offering_id),
         "update",
-        {"address_code": offering.address_code, **changes},
+        {"address_code": offering.address_code, "technology_name": tech_name, "address_label": addr_label, **changes},
         address_code=offering.address_code,
     )
     await db.commit()
@@ -356,6 +361,8 @@ async def delete_address_offering(
 ) -> None:
     offering = await _require_offering(db, offering_id)
     address_code = offering.address_code
+    tech_name = await technology_display_name(db, offering.technology_id)
+    addr_label = await address_label_for_code(db, address_code)
     await db.delete(offering)
     await log_action(
         db,
@@ -363,7 +370,7 @@ async def delete_address_offering(
         "address_offering",
         str(offering_id),
         "delete",
-        {"address_code": address_code},
+        {"address_code": address_code, "technology_name": tech_name, "address_label": addr_label},
         address_code=address_code,
     )
     await db.commit()
