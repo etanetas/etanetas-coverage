@@ -140,8 +140,11 @@ async def map_zones_geojson(
     """)
 
     result = await db.scalar(sql)
-    return Response(content=result or '{"type":"FeatureCollection","features":[]}',
-                    media_type="application/json")
+    return Response(
+        content=result or '{"type":"FeatureCollection","features":[]}',
+        media_type="application/json",
+        headers={"Cache-Control": "max-age=300"},
+    )
 
 
 _MAX_POLYGON_BYTES = 256 * 1024  # 256 KB cap to protect PostGIS from huge payloads
