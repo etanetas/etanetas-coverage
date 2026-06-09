@@ -10,6 +10,7 @@ from app.api.pagination import Page, PaginationParams, pagination_params
 from app.api.responses import created
 from app.audit import log_action
 from app.auth import require_role
+from app.db.audit_helpers import technology_display_name, zone_name_for_id
 from app.db.filter_builder import build_where
 from app.dependencies import get_db
 from app.models.admin import User
@@ -269,7 +270,7 @@ async def create_zone_offering(
     db: Annotated[AsyncSession, Depends(get_db)],
     response: Response,
 ) -> ZoneOfferingOut:
-    await _require_zone(db, zone_id)
+    zone = await _require_zone(db, zone_id)
 
     existing = await db.execute(
         select(ZoneOffering).where(
@@ -283,8 +284,9 @@ async def create_zone_offering(
     offering = ZoneOffering(zone_id=zone_id, **body.model_dump())
     db.add(offering)
     await db.flush()
+    tech_name = await technology_display_name(db, body.technology_id)
     await log_action(db, current_user.id, "zone_offering", str(offering.id), "create",
-                     {"zone_id": str(zone_id), **body.model_dump()})
+                     {"zone_id": str(zone_id), "zone_name": zone.name, "technology_name": tech_name, **body.model_dump()})
     await db.commit()
     await db.refresh(offering)
     return created(
@@ -308,7 +310,10 @@ async def update_zone_offering(
         setattr(offering, field, value)
     offering.updated_at = now()
 
-    await log_action(db, current_user.id, "zone_offering", str(offering_id), "update", changes)
+    tech_name = await technology_display_name(db, offering.technology_id)
+    z_name = await zone_name_for_id(db, offering.zone_id)
+    await log_action(db, current_user.id, "zone_offering", str(offering_id), "update",
+                     {"zone_id": str(offering.zone_id), "zone_name": z_name, "technology_name": tech_name, **changes})
     await db.commit()
     await db.refresh(offering)
     return offering
@@ -322,9 +327,11 @@ async def delete_zone_offering(
 ) -> None:
     offering = await _require_offering(db, offering_id)
     zone_id = offering.zone_id
+    tech_name = await technology_display_name(db, offering.technology_id)
+    z_name = await zone_name_for_id(db, zone_id)
     await db.delete(offering)
     await log_action(db, current_user.id, "zone_offering", str(offering_id), "delete",
-                     {"zone_id": str(zone_id)})
+                     {"zone_id": str(zone_id), "zone_name": z_name, "technology_name": tech_name})
     await db.commit()
 
 

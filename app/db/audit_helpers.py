@@ -32,3 +32,13 @@ async def technology_display_name(db: AsyncSession, technology_id: uuid.UUID) ->
         select(Technology.display_name).where(Technology.id == technology_id)
     )
     return result.scalar_one_or_none()
+
+
+async def zone_name_for_id(db: AsyncSession, zone_id: uuid.UUID) -> str | None:
+    """Return the name of the service zone for the given UUID, or None if not found."""
+    from app.models.service import ServiceZone
+
+    result = await db.execute(
+        select(ServiceZone.name).where(ServiceZone.id == zone_id)
+    )
+    return result.scalar_one_or_none()
