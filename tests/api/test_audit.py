@@ -1,10 +1,12 @@
 import secrets
+import uuid as _uuid
 
 import bcrypt
 import pytest
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy import text
 
+from app.db.audit_helpers import address_label_for_code, technology_display_name
 from app.dependencies import get_db
 from app.main import app
 from app.models.admin import ApiKey, User
@@ -127,10 +129,6 @@ async def test_audit_log_viewer_forbidden(client, editor_user):
     _, raw = editor_user
     resp = await client.get("/api/v1/admin/audit-log", headers={"X-API-Key": raw})
     assert resp.status_code == 403
-
-
-from app.db.audit_helpers import address_label_for_code, technology_display_name
-import uuid as _uuid
 
 
 @pytest.mark.integration
