@@ -183,6 +183,43 @@ async def test_audit_diff_contains_enriched_fields(client, editor_user, admin_us
 
 
 @pytest.mark.integration
+async def test_bulk_execute_audit_contains_technology_name(client, editor_user, admin_user, seed_address, seed_tech):
+    _, editor_raw = editor_user
+    _, admin_raw = admin_user
+    _, tech = seed_tech
+
+    # Preview
+    prev = await client.post(
+        "/api/v1/admin/bulk/preview",
+        json={
+            "filter": {"rc_codes": [seed_address]},
+            "operation": {"type": "add_offering", "technology_id": str(tech.id),
+                          "status": "available", "max_dl_mbps": 100, "max_ul_mbps": 50,
+                          "status_since": "2026-01-01"},
+        },
+        headers={"X-API-Key": admin_raw},
+    )
+    assert prev.status_code == 200, prev.text
+    token = prev.json()["preview_token"]
+
+    # Execute
+    await client.post(
+        "/api/v1/admin/bulk/execute",
+        json={"preview_token": token},
+        headers={"X-API-Key": admin_raw},
+    )
+
+    resp = await client.get(
+        "/api/v1/admin/audit-log",
+        params={"entity_type": "bulk_operation"},
+        headers={"X-API-Key": admin_raw},
+    )
+    entry = next(e for e in resp.json()["items"] if e["action"] == "execute")
+    assert entry["diff"]["technology_name"] == "AuditVariant"
+    assert entry["diff"]["affected_count"] >= 1
+
+
+@pytest.mark.integration
 async def test_audit_log_filter_by_entity_type(client, admin_user, seed_tech):
     _, admin_raw = admin_user
     _, tech = seed_tech

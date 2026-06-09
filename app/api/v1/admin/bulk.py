@@ -14,6 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.pagination import Page, PaginationParams, pagination_params
 from app.api.responses import created
 from app.audit import log_action
+from app.db.audit_helpers import technology_display_name
 from app.auth import require_role
 from app.config import settings
 from app.db.address_labels import (  # noqa: F401
@@ -129,6 +130,7 @@ async def bulk_execute(
     op_data: dict = preview["operation"]
     op = _parse_operation(op_data)
     op_type = op.type
+    tech_name = await technology_display_name(db, op.technology_id)
 
     bulk_op = BulkOperations(
         user_id=current_user.id,
@@ -142,14 +144,14 @@ async def bulk_execute(
 
     # Dispatch based on operation type
     if isinstance(op, AddOfferingOperation):
-        modified = await _execute_add_offering(db, bulk_op.id, current_user.id, op, rc_codes)
+        modified = await _execute_add_offering(db, bulk_op.id, current_user.id, op, rc_codes, tech_name)
         bulk_op.rollback_data = {
             "type": "add_offering",
             "technology_id": str(op.technology_id),
             "created_codes": modified,
         }
     elif isinstance(op, ChangeOfferingOperation):
-        modified, old_values = await _execute_change_offering(db, bulk_op.id, current_user.id, op, rc_codes)
+        modified, old_values = await _execute_change_offering(db, bulk_op.id, current_user.id, op, rc_codes, tech_name)
         bulk_op.rollback_data = {
             "type": "change_offering",
             "technology_id": str(op.technology_id),
@@ -157,7 +159,7 @@ async def bulk_execute(
         }
     else:  # RemoveOfferingOperation
         assert isinstance(op, RemoveOfferingOperation)
-        modified, deleted_data = await _execute_remove_offering(db, bulk_op.id, current_user.id, op, rc_codes)
+        modified, deleted_data = await _execute_remove_offering(db, bulk_op.id, current_user.id, op, rc_codes, tech_name)
         bulk_op.rollback_data = {
             "type": "remove_offering",
             "technology_id": str(op.technology_id),
@@ -172,7 +174,7 @@ async def bulk_execute(
         "bulk_operation",
         str(bulk_op.id),
         "execute",
-        {"type": op_type, "affected_count": len(modified)},
+        {"type": op_type, "affected_count": len(modified), "technology_name": tech_name},
     )
     await db.commit()
 
@@ -205,6 +207,8 @@ async def bulk_rollback(
     rd = bulk_op.rollback_data or {}
     rd_type = rd.get("type")
     tech_id = rd.get("technology_id")
+    _rb_tech_uuid = uuid.UUID(tech_id) if tech_id else None
+    rb_tech_name = await technology_display_name(db, _rb_tech_uuid) if _rb_tech_uuid else None
     affected = 0
 
     if rd_type == "add_offering":
@@ -270,7 +274,7 @@ async def bulk_rollback(
         "bulk_operation",
         str(bulk_op_id),
         "rollback",
-        {"rolled_back_count": affected, "type": rd_type},
+        {"rolled_back_count": affected, "type": rd_type, "technology_name": rb_tech_name},
     )
     await db.commit()
     return BulkRollbackResponse(rolled_back_count=affected)
@@ -459,6 +463,7 @@ async def _execute_add_offering(
     user_id: uuid.UUID,
     op: AddOfferingOperation,
     rc_codes: list[int],
+    technology_name: str | None = None,
 ) -> list[int]:
     # Filter out addresses soft-deleted between preview and execute
     live_result = await db.execute(
@@ -501,7 +506,7 @@ async def _execute_add_offering(
 
     # Batch audit entries for created offerings
     if created:
-        diff_json = json.dumps({"bulk_operation_id": str(bulk_op_id), "status": op.status})
+        diff_json = json.dumps({"bulk_operation_id": str(bulk_op_id), "status": op.status, "technology_name": technology_name})
         await db.execute(
             text("""
                 INSERT INTO audit_log (user_id, entity_type, entity_id, action, diff, at, address_code)
@@ -528,6 +533,7 @@ async def _execute_change_offering(
     user_id: uuid.UUID,
     op: ChangeOfferingOperation,
     rc_codes: list[int],
+    technology_name: str | None = None,
 ) -> tuple[list[int], list[dict]]:
     """Update existing address_offerings for the given technology. Returns (modified_rc_codes, old_values)."""
     # Fetch existing offerings to capture old values for rollback
@@ -606,7 +612,7 @@ async def _execute_change_offering(
             changes["planned_until"] = op.new_planned_until.isoformat()
         if op.new_notes is not None:
             changes["notes"] = op.new_notes
-        diff_json = json.dumps({"bulk_operation_id": str(bulk_op_id), **changes})
+        diff_json = json.dumps({"bulk_operation_id": str(bulk_op_id), "technology_name": technology_name, **changes})
         await db.execute(
             text("""
                 INSERT INTO audit_log (user_id, entity_type, entity_id, action, diff, at, address_code)
@@ -634,6 +640,7 @@ async def _execute_remove_offering(
     user_id: uuid.UUID,
     op: RemoveOfferingOperation,
     rc_codes: list[int],
+    technology_name: str | None = None,
 ) -> tuple[list[int], list[dict]]:
     """Delete existing address_offerings. Returns (deleted_rc_codes, full_data_for_rollback)."""
     existing = (await db.execute(
@@ -666,7 +673,7 @@ async def _execute_remove_offering(
     deleted_codes = [int(r["address_code"]) for r in existing]
 
     # Batch audit entries for deleted offerings (before DELETE so we can join for IDs)
-    diff_json = json.dumps({"bulk_operation_id": str(bulk_op_id), "technology_id": str(op.technology_id)})
+    diff_json = json.dumps({"bulk_operation_id": str(bulk_op_id), "technology_id": str(op.technology_id), "technology_name": technology_name})
     await db.execute(
         text("""
             INSERT INTO audit_log (user_id, entity_type, entity_id, action, diff, at, address_code)
