@@ -82,8 +82,11 @@ async def map_addresses(
     result = await db.scalar(sql, {
         "lon1": lon1, "lat1": lat1, "lon2": lon2, "lat2": lat2, "limit": limit,
     })
-    return Response(content=result or '{"type":"FeatureCollection","features":[]}',
-                    media_type="application/json")
+    return Response(
+        content=result or '{"type":"FeatureCollection","features":[]}',
+        media_type="application/json",
+        headers={"Cache-Control": "max-age=300"},
+    )
 
 
 @router.get("/zones/geojson", summary="Zones GeoJSON", operation_id="admin.map.zones-geojson")

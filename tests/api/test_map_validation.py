@@ -78,3 +78,15 @@ async def test_map_addresses_accepts_gzip_encoding(client, admin):
     # Middleware must not break the endpoint; empty bbox = small response = no compression
     assert resp.status_code == 200
     assert "application/json" in resp.headers["content-type"]
+
+
+@pytest.mark.integration
+async def test_map_addresses_has_cache_control(client, admin):
+    _, raw = admin
+    resp = await client.get(
+        "/api/v1/admin/map/addresses",
+        params={"bbox": "25.0,54.0,26.0,55.0"},
+        headers={"X-API-Key": raw},
+    )
+    assert resp.status_code == 200
+    assert resp.headers.get("cache-control") == "max-age=300"
