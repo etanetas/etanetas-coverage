@@ -1,4 +1,5 @@
 import asyncio
+import logging
 import secrets
 import sys
 from importlib.metadata import version as pkg_version
@@ -8,6 +9,7 @@ import bcrypt
 import typer
 from rich import print as rprint
 from rich.console import Console
+from rich.logging import RichHandler
 from rich.progress import Progress, SpinnerColumn, TextColumn
 from rich.table import Table
 from sqlalchemy import select
@@ -109,8 +111,18 @@ def import_gis(
         raise typer.Exit(code=1) from None
 
 
+def _swap_console_handler_for_rich(console: Console) -> None:
+    """Route root console logging through rich so log lines don't corrupt the spinner."""
+    root = logging.getLogger()
+    for handler in list(root.handlers):
+        if type(handler) is logging.StreamHandler:
+            root.removeHandler(handler)
+    root.addHandler(RichHandler(console=console, show_path=False, rich_tracebacks=False))
+
+
 async def _import_gis(options: ImportOptions) -> None:
     console = Console()
+    _swap_console_handler_for_rich(console)
     with Progress(
         SpinnerColumn(),
         TextColumn("[progress.description]{task.description}"),
