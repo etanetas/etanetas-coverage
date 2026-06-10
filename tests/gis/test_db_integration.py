@@ -14,9 +14,11 @@ from app.gis_import import (
     match_addresses,
     resolve_technology,
     resolve_user,
+    upsert_zone,
 )
 from app.models.address import Address, County, Locality, Municipality
 from app.models.admin import BulkOperations, User
+from app.models.service import ServiceZone
 from app.models.technology import Technology, TechnologyType
 
 # Synthetic RC codes far outside real ranges to avoid clashing with imported data.
@@ -253,3 +255,57 @@ async def test_load_temp_geometries_rerun_same_transaction(db_session: AsyncSess
 
     count = (await db_session.execute(text("SELECT count(*) FROM gis_import_geom"))).scalar()
     assert count == 1  # table was replaced, not appended to
+
+
+async def test_upsert_zone_creates_zone_with_coverage_polygon(db_session: AsyncSession) -> None:
+    await _seed_addresses(db_session)
+    tech, user = await _seed_tech_and_user(db_session)
+    await load_temp_geometries(db_session, [TEST_LINE])
+
+    action = await upsert_zone(
+        db_session, _options(zone_name="Test zona", distance=100.0), tech, user.id
+    )
+
+    assert action == "created"
+    row = (
+        await db_session.execute(
+            text(
+                """
+                SELECT z.name,
+                       ST_SRID(z.polygon::geometry) AS srid,
+                       GeometryType(z.polygon::geometry) AS gtype,
+                       ST_Contains(z.polygon::geometry,
+                                   (SELECT point::geometry FROM addresses WHERE rc_code = :near)) AS has_near,
+                       ST_Contains(z.polygon::geometry,
+                                   (SELECT point::geometry FROM addresses WHERE rc_code = :far)) AS has_far,
+                       zo.status, zo.max_download_mbps
+                FROM service_zones z
+                JOIN zone_offerings zo ON zo.zone_id = z.id
+                WHERE z.name = 'Test zona' AND z.deleted_at IS NULL
+                """
+            ),
+            {"near": ADDR_NEAR, "far": ADDR_FAR},
+        )
+    ).one()
+    assert row.srid == 4326
+    assert row.gtype == "MULTIPOLYGON"
+    assert row.has_near is True   # ~30 m from line, buffer 100 m
+    assert row.has_far is False   # ~2 km away
+    assert row.status == "available"
+    assert row.max_download_mbps == 2500
+
+
+async def test_upsert_zone_rejects_ambiguous_name(db_session: AsyncSession) -> None:
+    await _seed_addresses(db_session)
+    tech, user = await _seed_tech_and_user(db_session)
+    db_session.add_all(
+        [
+            ServiceZone(name="Dup zona", created_by=user.id),
+            ServiceZone(name="Dup zona", created_by=user.id),
+        ]
+    )
+    await db_session.flush()
+    await load_temp_geometries(db_session, [TEST_LINE])
+
+    with pytest.raises(GisImportError, match="Multiple active zones"):
+        await upsert_zone(db_session, _options(zone_name="Dup zona"), tech, user.id)

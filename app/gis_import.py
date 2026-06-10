@@ -21,7 +21,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import AsyncSessionLocal
 from app.models.admin import BulkOperations, User
-from app.models.service import AddressOffering
+from app.models.service import AddressOffering, ServiceZone, ZoneOffering
 from app.models.technology import Technology
 from app.time import now
 
@@ -45,6 +45,7 @@ class ImportOptions:
     download: int | None = None
     upload: int | None = None
     dry_run: bool = False
+    zone_name: str | None = None
 
 
 @dataclass
@@ -54,6 +55,8 @@ class ImportReport:
     addresses_matched: int = 0
     offerings_created: int = 0
     existing_skipped: int = 0
+    zone_name: str | None = None
+    zone_action: str | None = None
 
 
 def read_geometries(path: Path) -> tuple[list[str], int]:
@@ -171,6 +174,13 @@ async def resolve_user(session: AsyncSession, username: str) -> User:
     return user
 
 
+def _offering_speeds(options: ImportOptions, tech: Technology) -> tuple[int, int]:
+    """Download/upload for offerings: CLI override wins, else technology maxima."""
+    download = options.download if options.download is not None else (tech.theoretical_max_dl_mbps or 0)
+    upload = options.upload if options.upload is not None else (tech.theoretical_max_ul_mbps or 0)
+    return download, upload
+
+
 async def insert_offerings(
     session: AsyncSession,
     rc_codes: list[int],
@@ -184,8 +194,7 @@ async def insert_offerings(
     Returns the number of rows actually inserted.
     """
     current = now()
-    download = options.download if options.download is not None else (tech.theoretical_max_dl_mbps or 0)
-    upload = options.upload if options.upload is not None else (tech.theoretical_max_ul_mbps or 0)
+    download, upload = _offering_speeds(options, tech)
     created = 0
     for i in range(0, len(rc_codes), BATCH_SIZE):
         rows = [
@@ -210,6 +219,91 @@ async def insert_offerings(
         result = await session.execute(stmt)
         created += result.rowcount
     return created
+
+
+async def upsert_zone(
+    session: AsyncSession,
+    options: ImportOptions,
+    tech: Technology,
+    user_id: uuid.UUID,
+) -> str:
+    """Create or refresh the coverage ServiceZone + ZoneOffering from the temp table.
+
+    Polygon = network geometries buffered by `options.distance` meters,
+    dissolved, simplified (1 m) and transformed to WGS84. Returns
+    ``"created"`` or ``"updated"``.
+    """
+    polygon = (
+        await session.execute(
+            text(
+                """
+                SELECT ST_Multi(ST_Transform(
+                         ST_SimplifyPreserveTopology(
+                           ST_Union(ST_Buffer(geom, :distance)), 1.0),
+                         4326))
+                FROM gis_import_geom
+                """
+            ),
+            {"distance": options.distance},
+        )
+    ).scalar_one()
+    if polygon is None:
+        raise GisImportError("Cannot build zone polygon: no geometries loaded")
+
+    result = await session.execute(
+        select(ServiceZone).where(
+            ServiceZone.name == options.zone_name, ServiceZone.deleted_at.is_(None)
+        )
+    )
+    zones = result.scalars().all()
+    if len(zones) > 1:
+        raise GisImportError(
+            f"Multiple active zones named '{options.zone_name}' — clean up duplicates first"
+        )
+
+    if zones:
+        zone = zones[0]
+        zone.polygon = polygon
+        action = "updated"
+    else:
+        zone = ServiceZone(
+            name=options.zone_name,
+            description=f"Imported from GIS shapefiles (distance {options.distance:g} m)",
+            polygon=polygon,
+            created_by=user_id,
+        )
+        session.add(zone)
+        action = "created"
+    await session.flush()
+
+    current = now()
+    download, upload = _offering_speeds(options, tech)
+    offering_stmt = (
+        pg_insert(ZoneOffering)
+        .values(
+            id=uuid.uuid4(),
+            zone_id=zone.id,
+            technology_id=tech.id,
+            status=options.status,
+            max_download_mbps=download,
+            max_upload_mbps=upload,
+            status_since=current.date(),
+            created_at=current,
+            updated_at=current,
+        )
+        .on_conflict_do_update(
+            index_elements=["zone_id", "technology_id"],
+            set_={
+                "status": options.status,
+                "max_download_mbps": download,
+                "max_upload_mbps": upload,
+                "status_since": current.date(),
+                "updated_at": current,
+            },
+        )
+    )
+    await session.execute(offering_stmt)
+    return action
 
 
 async def _run_db_steps(
