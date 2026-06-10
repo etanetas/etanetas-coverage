@@ -2,14 +2,20 @@ import asyncio
 import secrets
 import sys
 from importlib.metadata import version as pkg_version
+from pathlib import Path
 
 import bcrypt
 import typer
 from rich import print as rprint
+from rich.console import Console
+from rich.progress import Progress, SpinnerColumn, TextColumn
+from rich.table import Table
 from sqlalchemy import select
 
 from app.config import settings
 from app.database import AsyncSessionLocal
+from app.gis_import import GisImportError, ImportOptions, ImportReport, run_import
+from app.logging_config import configure_logging
 from app.models.admin import ApiKey, User
 from app.time import now
 
@@ -66,6 +72,68 @@ def list_users():
 @app.command("version")
 def show_version():
     rprint(f"\netanetas-cli {pkg_version('etanetas-coverage')}\n")
+
+
+@app.command("import-gis")
+def import_gis(
+    shapefile: list[Path] = typer.Option(
+        ..., "--shapefile", help="Path to a .shp file (repeatable, lines and/or points)"
+    ),
+    technology: str = typer.Option(..., help="Technology variant_code, e.g. gpon"),
+    distance: float = typer.Option(..., help="Max distance in meters from the network"),
+    username: str = typer.Option(..., help="Existing user recorded as created_by"),
+    status: str = typer.Option("available", help="Offering status"),
+    download: int | None = typer.Option(None, help="Override max_download_mbps"),
+    upload: int | None = typer.Option(None, help="Override max_upload_mbps"),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Run everything, roll back at the end"),
+):
+    """Import network coverage from GIS shapefiles as address offerings."""
+    configure_logging()
+    options = ImportOptions(
+        shapefiles=shapefile,
+        technology=technology,
+        distance=distance,
+        username=username,
+        status=status,
+        download=download,
+        upload=upload,
+        dry_run=dry_run,
+    )
+    try:
+        asyncio.run(_import_gis(options))
+    except GisImportError as e:
+        rprint(f"[red]ERROR: {e}[/red]", file=sys.stderr)
+        raise typer.Exit(code=1) from None
+    except Exception as e:
+        rprint(f"[red]ERROR: {type(e).__name__}: {e}[/red]", file=sys.stderr)
+        raise typer.Exit(code=1) from None
+
+
+async def _import_gis(options: ImportOptions) -> None:
+    console = Console()
+    with Progress(
+        SpinnerColumn(),
+        TextColumn("[progress.description]{task.description}"),
+        console=console,
+    ) as progress:
+        task = progress.add_task("Starting…", total=None)
+        report = await run_import(
+            options, progress=lambda stage: progress.update(task, description=stage)
+        )
+    _print_report(console, report, options)
+
+
+def _print_report(console: Console, report: ImportReport, options: ImportOptions) -> None:
+    title = "GIS import — dry run (nothing saved)" if options.dry_run else "GIS import"
+    table = Table(title=title)
+    table.add_column("Metric")
+    table.add_column("Count", justify="right")
+    table.add_row("Geometries loaded", str(report.geometries_loaded))
+    table.add_row("Inactive records skipped", str(report.inactive_skipped))
+    table.add_row("Addresses matched", str(report.addresses_matched))
+    table.add_row("Offerings created", f"[green]{report.offerings_created}[/green]")
+    table.add_row("Existing skipped", str(report.existing_skipped))
+    console.print(table)
 
 
 async def _create_admin(username: str, email: str) -> None:
