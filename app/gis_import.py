@@ -13,6 +13,8 @@ from itertools import pairwise
 from pathlib import Path
 
 import shapefile
+from sqlalchemy import text
+from sqlalchemy.ext.asyncio import AsyncSession
 
 log = logging.getLogger(__name__)
 
@@ -94,3 +96,39 @@ def _shape_to_wkts(shape: shapefile.Shape, source: Path) -> list[str]:
             wkts.append(f"LINESTRING({coords})")
         return wkts
     raise GisImportError(f"Unsupported shape type '{type_name}' in {source}")
+
+
+async def load_temp_geometries(session: AsyncSession, wkts: list[str]) -> None:
+    """Load WKT geometries into a session-local temp table with a GiST index."""
+    await session.execute(
+        text("CREATE TEMP TABLE gis_import_geom (geom geometry(Geometry, 3346))")
+    )
+    insert_stmt = text("INSERT INTO gis_import_geom (geom) VALUES (ST_GeomFromText(:wkt, 3346))")
+    for i in range(0, len(wkts), BATCH_SIZE):
+        await session.execute(insert_stmt, [{"wkt": w} for w in wkts[i : i + BATCH_SIZE]])
+    await session.execute(
+        text("CREATE INDEX ix_gis_import_geom ON gis_import_geom USING gist (geom)")
+    )
+    await session.execute(text("ANALYZE gis_import_geom"))
+    log.info("Loaded %d geometries into temp table", len(wkts))
+
+
+async def match_addresses(session: AsyncSession, distance: float) -> list[int]:
+    """Return rc_codes of building addresses within `distance` meters of the network."""
+    result = await session.execute(
+        text(
+            """
+            SELECT a.rc_code
+            FROM addresses a
+            WHERE a.address_type = 'building'
+              AND a.deleted_at IS NULL
+              AND a.point IS NOT NULL
+              AND EXISTS (
+                SELECT 1 FROM gis_import_geom g
+                WHERE ST_DWithin(ST_Transform(a.point, 3346), g.geom, :distance)
+              )
+            """
+        ),
+        {"distance": distance},
+    )
+    return [row[0] for row in result]
