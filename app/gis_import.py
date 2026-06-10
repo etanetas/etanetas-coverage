@@ -9,6 +9,7 @@ Design: docs/superpowers/specs/2026-06-10-gis-import-design.md
 
 import logging
 import uuid
+from collections.abc import Callable
 from dataclasses import dataclass
 from itertools import pairwise
 from pathlib import Path
@@ -18,7 +19,8 @@ from sqlalchemy import select, text
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.admin import User
+from app.database import AsyncSessionLocal
+from app.models.admin import BulkOperations, User
 from app.models.service import AddressOffering
 from app.models.technology import Technology
 from app.time import now
@@ -207,3 +209,88 @@ async def insert_offerings(
         result = await session.execute(stmt)
         created += result.rowcount
     return created
+
+
+async def _run_db_steps(
+    session: AsyncSession,
+    options: ImportOptions,
+    wkts: list[str],
+    report: ImportReport,
+    progress: Callable[[str], None],
+) -> ImportReport:
+    """All DB work for one import, on a caller-managed session (no commit here)."""
+    tech = await resolve_technology(session, options.technology)
+    user = await resolve_user(session, options.username)
+    if not user.active:
+        raise GisImportError(f"User '{options.username}' is inactive")
+
+    progress("Loading geometries into PostGIS")
+    await load_temp_geometries(session, wkts)
+
+    progress("Matching addresses")
+    matched = await match_addresses(session, options.distance)
+    report.addresses_matched = len(matched)
+    log.info("Matched %d building addresses within %.0f m", len(matched), options.distance)
+
+    progress("Creating offerings")
+    bulk_op = BulkOperations(
+        user_id=user.id,
+        operation_type="gis_import",
+        filter_criteria={
+            "shapefiles": [str(p) for p in options.shapefiles],
+            "technology": options.technology,
+            "distance_m": options.distance,
+            "status": options.status,
+            "dry_run": options.dry_run,
+        },
+        affected_count=0,
+    )
+    session.add(bulk_op)
+    await session.flush()
+
+    report.offerings_created = await insert_offerings(
+        session, matched, tech, user.id, options, bulk_op.id
+    )
+    report.existing_skipped = report.addresses_matched - report.offerings_created
+    bulk_op.affected_count = report.offerings_created
+    await session.flush()
+    log.info(
+        "Created %d offerings (%d already existed)",
+        report.offerings_created,
+        report.existing_skipped,
+    )
+    return report
+
+
+async def run_import(
+    options: ImportOptions,
+    progress: Callable[[str], None] | None = None,
+) -> ImportReport:
+    """Run the full import. Dry-run executes everything and rolls back."""
+    progress = progress or (lambda stage: None)
+
+    if options.status not in VALID_STATUSES:
+        raise GisImportError(
+            f"Invalid status '{options.status}'. Valid: {', '.join(sorted(VALID_STATUSES))}"
+        )
+
+    progress("Reading shapefiles")
+    report = ImportReport()
+    wkts: list[str] = []
+    for path in options.shapefiles:
+        file_wkts, skipped = read_geometries(path)
+        wkts.extend(file_wkts)
+        report.inactive_skipped += skipped
+        log.info("Read %d geometries from %s (%d inactive skipped)", len(file_wkts), path, skipped)
+    report.geometries_loaded = len(wkts)
+    if not wkts:
+        raise GisImportError("No active geometries found in the given shapefiles")
+
+    async with AsyncSessionLocal() as session:
+        report = await _run_db_steps(session, options, wkts, report, progress)
+        if options.dry_run:
+            await session.rollback()
+            log.info("Dry run — transaction rolled back")
+        else:
+            await session.commit()
+    return report

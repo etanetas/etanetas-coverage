@@ -7,6 +7,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.gis_import import (
     GisImportError,
     ImportOptions,
+    ImportReport,
+    _run_db_steps,
     insert_offerings,
     load_temp_geometries,
     match_addresses,
@@ -206,3 +208,36 @@ async def test_resolvers_raise_for_unknown(db_session: AsyncSession) -> None:
         await resolve_technology(db_session, "no_such_tech")
     with pytest.raises(GisImportError, match="User"):
         await resolve_user(db_session, "no_such_user")
+
+
+async def test_run_db_steps_end_to_end(db_session: AsyncSession) -> None:
+    await _seed_addresses(db_session)
+    await _seed_tech_and_user(db_session)
+
+    report = ImportReport(geometries_loaded=1)
+    report = await _run_db_steps(
+        db_session, _options(), [TEST_LINE], report, progress=lambda stage: None
+    )
+
+    assert report.addresses_matched == 1
+    assert report.offerings_created == 1
+    assert report.existing_skipped == 0
+    bulk_op = (
+        await db_session.execute(
+            text("SELECT operation_type, affected_count FROM bulk_operations")
+        )
+    ).one()
+    assert bulk_op.operation_type == "gis_import"
+    assert bulk_op.affected_count == 1
+
+
+async def test_run_db_steps_rejects_inactive_user(db_session: AsyncSession) -> None:
+    await _seed_addresses(db_session)
+    _, user = await _seed_tech_and_user(db_session)
+    user.active = False
+    await db_session.flush()
+
+    with pytest.raises(GisImportError, match="inactive"):
+        await _run_db_steps(
+            db_session, _options(), [TEST_LINE], ImportReport(), progress=lambda stage: None
+        )
