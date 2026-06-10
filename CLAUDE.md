@@ -32,6 +32,10 @@ uv run python -m etl.tasks.monthly_full_resync
 
 # CLI
 uv run python -m app.cli create-admin --username X --email Y --password Z
+
+# Import GIS network shapefiles as address offerings (dry-run first!)
+uv run python -m app.cli import-gis --shapefile X.shp [--shapefile Y.shp] \
+  --technology gpon --distance 100 --username U [--dry-run]
 ```
 
 ```bash
