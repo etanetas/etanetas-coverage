@@ -9,6 +9,7 @@ Design: docs/superpowers/specs/2026-06-10-gis-import-design.md
 
 import logging
 from dataclasses import dataclass
+from itertools import pairwise
 from pathlib import Path
 
 import shapefile
@@ -64,6 +65,8 @@ def read_geometries(path: Path) -> tuple[list[str], int]:
     with reader:
         field_names = [f[0] for f in reader.fields[1:]]
         has_busena = "Busena" in field_names
+        if not has_busena:
+            log.warning("No Busena field in %s — importing all records", shp)
         for shape_rec in reader.iterShapeRecords():
             if has_busena and str(shape_rec.record["Busena"] or "").strip() != "v":
                 skipped += 1
@@ -79,16 +82,15 @@ def _shape_to_wkts(shape: shapefile.Shape, source: Path) -> list[str]:
         return []
     type_name = shape.shapeTypeName
     if type_name.startswith("POINT"):
-        return [f"POINT({points[0][0]} {points[0][1]})"]
+        return [f"POINT({points[0][0]:.10g} {points[0][1]:.10g})"]
     if type_name.startswith("POLYLINE"):
-        part_bounds = list(shape.parts) + [len(points)]
         wkts: list[str] = []
-        for start, end in zip(part_bounds, part_bounds[1:]):
+        for start, end in pairwise([*shape.parts, len(points)]):
             segment = points[start:end]
             if len(segment) < 2:
                 log.warning("Skipping degenerate polyline part (<2 points) in %s", source)
                 continue
-            coords = ", ".join(f"{p[0]} {p[1]}" for p in segment)
+            coords = ", ".join(f"{p[0]:.10g} {p[1]:.10g}" for p in segment)
             wkts.append(f"LINESTRING({coords})")
         return wkts
     raise GisImportError(f"Unsupported shape type '{type_name}' in {source}")

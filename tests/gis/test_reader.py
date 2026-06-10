@@ -32,7 +32,7 @@ def test_reads_points_and_skips_inactive(tmp_path: Path) -> None:
         [(580000.0, 6050000.0, "v"), (580010.0, 6050010.0, "b"), (580020.0, 6050020.0, "v")],
     )
     wkts, skipped = read_geometries(tmp_path / "pts")
-    assert wkts == ["POINT(580000.0 6050000.0)", "POINT(580020.0 6050020.0)"]
+    assert wkts == ["POINT(580000 6050000)", "POINT(580020 6050020)"]
     assert skipped == 1
 
 
@@ -42,14 +42,27 @@ def test_reads_multipart_polyline_as_separate_linestrings(tmp_path: Path) -> Non
         [([[[0.0, 0.0, 0.0], [10.0, 0.0, 0.0]], [[20.0, 0.0, 0.0], [30.0, 5.0, 0.0]]], "v")],
     )
     wkts, skipped = read_geometries(tmp_path / "lines")
-    assert wkts == ["LINESTRING(0.0 0.0, 10.0 0.0)", "LINESTRING(20.0 0.0, 30.0 5.0)"]
+    assert wkts == ["LINESTRING(0 0, 10 0)", "LINESTRING(20 0, 30 5)"]
     assert skipped == 0
 
 
 def test_accepts_path_with_shp_extension(tmp_path: Path) -> None:
     _write_points(tmp_path / "pts", [(1.0, 2.0, "v")])
     wkts, _ = read_geometries(tmp_path / "pts.shp")
-    assert wkts == ["POINT(1.0 2.0)"]
+    assert wkts == ["POINT(1 2)"]
+
+
+def test_no_busena_field_imports_all_records(tmp_path: Path) -> None:
+    """Shapefiles without a Busena field should import all records (skipped==0)."""
+    with shapefile.Writer(str(tmp_path / "nobusena"), shapeType=shapefile.POINTZ) as w:
+        w.field("Foo", "C", size=4)
+        w.pointz(100.0, 200.0, 0)
+        w.record("bar")
+        w.pointz(300.0, 400.0, 0)
+        w.record("baz")
+    wkts, skipped = read_geometries(tmp_path / "nobusena")
+    assert skipped == 0
+    assert wkts == ["POINT(100 200)", "POINT(300 400)"]
 
 
 def test_missing_file_raises(tmp_path: Path) -> None:

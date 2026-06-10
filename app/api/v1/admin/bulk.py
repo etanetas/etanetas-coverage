@@ -14,7 +14,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.pagination import Page, PaginationParams, pagination_params
 from app.api.responses import created
 from app.audit import log_action
-from app.db.audit_helpers import technology_display_name
 from app.auth import require_role
 from app.config import settings
 from app.db.address_labels import (  # noqa: F401
@@ -25,6 +24,7 @@ from app.db.address_labels import (  # noqa: F401
     _MUNI_SHORT,
     _STREET_WITH_TYPE,
 )
+from app.db.audit_helpers import technology_display_name
 from app.dependencies import get_db
 from app.errors import raise_error
 from app.limiter import limiter
