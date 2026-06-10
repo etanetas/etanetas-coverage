@@ -8,13 +8,20 @@ Design: docs/superpowers/specs/2026-06-10-gis-import-design.md
 """
 
 import logging
+import uuid
 from dataclasses import dataclass
 from itertools import pairwise
 from pathlib import Path
 
 import shapefile
-from sqlalchemy import text
+from sqlalchemy import select, text
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.models.admin import User
+from app.models.service import AddressOffering
+from app.models.technology import Technology
+from app.time import now
 
 log = logging.getLogger(__name__)
 
@@ -135,3 +142,68 @@ async def match_addresses(session: AsyncSession, distance: float) -> list[int]:
         {"distance": distance},
     )
     return [row[0] for row in result]
+
+
+async def resolve_technology(session: AsyncSession, variant_code: str) -> Technology:
+    """Resolve a Technology by variant_code; raise GisImportError if not found or deleted."""
+    result = await session.execute(
+        select(Technology).where(
+            Technology.variant_code == variant_code, Technology.deleted_at.is_(None)
+        )
+    )
+    tech = result.scalar_one_or_none()
+    if tech is None:
+        raise GisImportError(
+            f"Technology '{variant_code}' not found (use variant_code, e.g. gpon)"
+        )
+    return tech
+
+
+async def resolve_user(session: AsyncSession, username: str) -> User:
+    """Resolve a User by username; raise GisImportError if not found."""
+    result = await session.execute(select(User).where(User.username == username))
+    user = result.scalar_one_or_none()
+    if user is None:
+        raise GisImportError(f"User '{username}' not found")
+    return user
+
+
+async def insert_offerings(
+    session: AsyncSession,
+    rc_codes: list[int],
+    tech: Technology,
+    user_id: uuid.UUID,
+    options: ImportOptions,
+    bulk_operation_id: uuid.UUID,
+) -> int:
+    """Insert offerings batched; existing (address, technology) pairs are skipped.
+
+    Returns the number of rows actually inserted.
+    """
+    current = now()
+    download = options.download if options.download is not None else (tech.theoretical_max_dl_mbps or 0)
+    upload = options.upload if options.upload is not None else (tech.theoretical_max_ul_mbps or 0)
+    created = 0
+    for i in range(0, len(rc_codes), BATCH_SIZE):
+        rows = [
+            {
+                "id": uuid.uuid4(),
+                "address_code": code,
+                "technology_id": tech.id,
+                "status": options.status,
+                "max_download_mbps": download,
+                "max_upload_mbps": upload,
+                "status_since": current.date(),
+                "created_by": user_id,
+                "bulk_operation_id": bulk_operation_id,
+                "created_at": current,
+                "updated_at": current,
+            }
+            for code in rc_codes[i : i + BATCH_SIZE]
+        ]
+        stmt = pg_insert(AddressOffering).values(rows).on_conflict_do_nothing(
+            index_elements=["address_code", "technology_id"]
+        )
+        result = await session.execute(stmt)
+        created += result.rowcount
+    return created
