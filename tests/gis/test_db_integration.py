@@ -224,7 +224,10 @@ async def test_run_db_steps_end_to_end(db_session: AsyncSession) -> None:
     assert report.existing_skipped == 0
     bulk_op = (
         await db_session.execute(
-            text("SELECT operation_type, affected_count FROM bulk_operations")
+            text(
+                "SELECT operation_type, affected_count FROM bulk_operations"
+                " WHERE operation_type = 'gis_import'"
+            )
         )
     ).one()
     assert bulk_op.operation_type == "gis_import"

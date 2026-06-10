@@ -287,7 +287,11 @@ async def run_import(
         raise GisImportError("No active geometries found in the given shapefiles")
 
     async with AsyncSessionLocal() as session:
-        report = await _run_db_steps(session, options, wkts, report, progress)
+        try:
+            report = await _run_db_steps(session, options, wkts, report, progress)
+        except Exception:
+            await session.rollback()
+            raise
         if options.dry_run:
             await session.rollback()
             log.info("Dry run — transaction rolled back")
