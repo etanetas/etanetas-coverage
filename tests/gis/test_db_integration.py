@@ -77,3 +77,8 @@ async def test_match_works_with_points(db_session: AsyncSession) -> None:
 
     matched = await match_addresses(db_session, distance=50)
     assert ADDR_NEAR in matched
+
+
+async def test_load_temp_geometries_empty_input(db_session: AsyncSession) -> None:
+    await load_temp_geometries(db_session, [])
+    assert await match_addresses(db_session, distance=50) == []

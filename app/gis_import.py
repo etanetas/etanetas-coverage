@@ -101,7 +101,10 @@ def _shape_to_wkts(shape: shapefile.Shape, source: Path) -> list[str]:
 async def load_temp_geometries(session: AsyncSession, wkts: list[str]) -> None:
     """Load WKT geometries into a session-local temp table with a GiST index."""
     await session.execute(
-        text("CREATE TEMP TABLE gis_import_geom (geom geometry(Geometry, 3346))")
+        text(
+            "CREATE TEMP TABLE gis_import_geom"
+            " (geom geometry(Geometry, 3346)) ON COMMIT DROP"
+        )
     )
     insert_stmt = text("INSERT INTO gis_import_geom (geom) VALUES (ST_GeomFromText(:wkt, 3346))")
     for i in range(0, len(wkts), BATCH_SIZE):
