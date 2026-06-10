@@ -309,3 +309,69 @@ async def test_upsert_zone_rejects_ambiguous_name(db_session: AsyncSession) -> N
 
     with pytest.raises(GisImportError, match="Multiple active zones"):
         await upsert_zone(db_session, _options(zone_name="Dup zona"), tech, user.id)
+
+
+async def test_run_db_steps_creates_zone_when_requested(db_session: AsyncSession) -> None:
+    await _seed_addresses(db_session)
+    await _seed_tech_and_user(db_session)
+
+    report = await _run_db_steps(
+        db_session,
+        _options(zone_name="Zona A"),
+        [TEST_LINE],
+        ImportReport(geometries_loaded=1),
+        progress=lambda stage: None,
+    )
+
+    assert report.zone_name == "Zona A"
+    assert report.zone_action == "created"
+    zones = (
+        await db_session.execute(text("SELECT count(*) FROM service_zones WHERE name = 'Zona A'"))
+    ).scalar()
+    assert zones == 1
+
+
+async def test_run_db_steps_zone_rerun_updates_in_place(db_session: AsyncSession) -> None:
+    await _seed_addresses(db_session)
+    await _seed_tech_and_user(db_session)
+
+    first = await _run_db_steps(
+        db_session, _options(zone_name="Zona B"), [TEST_LINE],
+        ImportReport(), progress=lambda stage: None,
+    )
+    second = await _run_db_steps(
+        db_session, _options(zone_name="Zona B", status="planned"), [TEST_LINE],
+        ImportReport(), progress=lambda stage: None,
+    )
+
+    assert first.zone_action == "created"
+    assert second.zone_action == "updated"
+    row = (
+        await db_session.execute(
+            text(
+                """
+                SELECT count(*) AS zones,
+                       (SELECT count(*) FROM zone_offerings) AS offerings,
+                       (SELECT status FROM zone_offerings LIMIT 1) AS status
+                FROM service_zones WHERE name = 'Zona B' AND deleted_at IS NULL
+                """
+            )
+        )
+    ).one()
+    assert row.zones == 1
+    assert row.offerings == 1       # upserted, not duplicated
+    assert row.status == "planned"  # rerun updates the zone offering
+
+
+async def test_run_db_steps_no_zone_without_zone_name(db_session: AsyncSession) -> None:
+    await _seed_addresses(db_session)
+    await _seed_tech_and_user(db_session)
+
+    report = await _run_db_steps(
+        db_session, _options(), [TEST_LINE], ImportReport(), progress=lambda stage: None
+    )
+
+    assert report.zone_name is None
+    assert report.zone_action is None
+    zones = (await db_session.execute(text("SELECT count(*) FROM service_zones"))).scalar()
+    assert zones == 0

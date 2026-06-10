@@ -233,6 +233,9 @@ async def upsert_zone(
     dissolved, simplified (1 m) and transformed to WGS84. Returns
     ``"created"`` or ``"updated"``.
     """
+    if not options.zone_name:
+        raise GisImportError("zone_name is required to create a coverage zone")
+
     polygon = (
         await session.execute(
             text(
@@ -337,6 +340,7 @@ async def _run_db_steps(
             "distance_m": options.distance,
             "status": options.status,
             "dry_run": options.dry_run,
+            "zone_name": options.zone_name,
         },
         affected_count=0,
     )
@@ -354,6 +358,11 @@ async def _run_db_steps(
         report.offerings_created,
         report.existing_skipped,
     )
+    if options.zone_name:
+        progress("Creating coverage zone")
+        report.zone_name = options.zone_name
+        report.zone_action = await upsert_zone(session, options, tech, user.id)
+        log.info("Zone '%s' %s", options.zone_name, report.zone_action)
     return report
 
 
