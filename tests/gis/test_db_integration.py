@@ -244,3 +244,12 @@ async def test_run_db_steps_rejects_inactive_user(db_session: AsyncSession) -> N
         await _run_db_steps(
             db_session, _options(), [TEST_LINE], ImportReport(), progress=lambda stage: None
         )
+
+
+async def test_load_temp_geometries_rerun_same_transaction(db_session: AsyncSession) -> None:
+    await load_temp_geometries(db_session, [TEST_LINE])
+    # second call in the same transaction must not collide with the first table
+    await load_temp_geometries(db_session, ["POINT(580050 6050000)"])
+
+    count = (await db_session.execute(text("SELECT count(*) FROM gis_import_geom"))).scalar()
+    assert count == 1  # table was replaced, not appended to
