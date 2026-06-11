@@ -27,6 +27,7 @@ class ServiceZone(Base):
     description: Mapped[str | None] = mapped_column(Text)
     polygon: Mapped[str | None] = mapped_column(Geometry("MULTIPOLYGON", srid=4326))
     priority: Mapped[int] = mapped_column(Integer, default=100)
+    source: Mapped[str] = mapped_column(Text, default="manual", server_default="manual")
     created_at: Mapped[datetime] = mapped_column(TIMESTAMP, default=datetime.now)
     updated_at: Mapped[datetime | None] = mapped_column(TIMESTAMP, onupdate=datetime.now)
     created_by: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id"))
