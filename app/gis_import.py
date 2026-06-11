@@ -10,7 +10,7 @@ Design: docs/superpowers/specs/2026-06-10-gis-import-design.md
 import logging
 import uuid
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from itertools import pairwise
 from pathlib import Path
 
@@ -19,9 +19,10 @@ from sqlalchemy import select, text
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.auto_zones import rebuild_auto_zones
 from app.database import AsyncSessionLocal
 from app.models.admin import BulkOperations, User
-from app.models.service import AddressOffering, ServiceZone, ZoneOffering
+from app.models.service import AddressOffering
 from app.models.technology import Technology
 from app.time import now
 
@@ -45,7 +46,6 @@ class ImportOptions:
     download: int | None = None
     upload: int | None = None
     dry_run: bool = False
-    zone_name: str | None = None
 
 
 @dataclass
@@ -55,8 +55,7 @@ class ImportReport:
     addresses_matched: int = 0
     offerings_created: int = 0
     existing_skipped: int = 0
-    zone_name: str | None = None
-    zone_action: str | None = None
+    zones_rebuilt: list[str] = field(default_factory=list)
 
 
 def read_geometries(path: Path) -> tuple[list[str], int]:
@@ -221,94 +220,6 @@ async def insert_offerings(
     return created
 
 
-async def upsert_zone(
-    session: AsyncSession,
-    options: ImportOptions,
-    tech: Technology,
-    user_id: uuid.UUID,
-) -> str:
-    """Create or refresh the coverage ServiceZone + ZoneOffering from the temp table.
-
-    Polygon = network geometries buffered by `options.distance` meters,
-    dissolved, simplified (1 m) and transformed to WGS84. Returns
-    ``"created"`` or ``"updated"``.
-    """
-    if not options.zone_name:
-        raise GisImportError("zone_name is required to create a coverage zone")
-
-    polygon = (
-        await session.execute(
-            text(
-                """
-                SELECT ST_Multi(ST_Transform(
-                         ST_SimplifyPreserveTopology(
-                           ST_Union(ST_Buffer(geom, :distance)), 1.0),
-                         4326))
-                FROM gis_import_geom
-                """
-            ),
-            {"distance": options.distance},
-        )
-    ).scalar_one()
-    if polygon is None:
-        raise GisImportError("Cannot build zone polygon: no geometries loaded")
-
-    result = await session.execute(
-        select(ServiceZone).where(
-            ServiceZone.name == options.zone_name, ServiceZone.deleted_at.is_(None)
-        )
-    )
-    zones = result.scalars().all()
-    if len(zones) > 1:
-        raise GisImportError(
-            f"Multiple active zones named '{options.zone_name}' — clean up duplicates first"
-        )
-
-    if zones:
-        zone = zones[0]
-        zone.polygon = polygon
-        action = "updated"
-    else:
-        zone = ServiceZone(
-            name=options.zone_name,
-            description=f"Imported from GIS shapefiles (distance {options.distance:g} m)",
-            polygon=polygon,
-            created_by=user_id,
-        )
-        session.add(zone)
-        action = "created"
-    await session.flush()
-
-    current = now()
-    download, upload = _offering_speeds(options, tech)
-    offering_stmt = (
-        pg_insert(ZoneOffering)
-        .values(
-            id=uuid.uuid4(),
-            zone_id=zone.id,
-            technology_id=tech.id,
-            status=options.status,
-            max_download_mbps=download,
-            max_upload_mbps=upload,
-            status_since=current.date(),
-            created_at=current,
-            updated_at=current,
-        )
-        .on_conflict_do_update(
-            index_elements=["zone_id", "technology_id"],
-            set_={
-                "status": options.status,
-                "max_download_mbps": download,
-                "max_upload_mbps": upload,
-                "status_since": current.date(),
-                "updated_at": current,
-            },
-        )
-    )
-    await session.execute(offering_stmt)
-    return action
-
-
 async def _run_db_steps(
     session: AsyncSession,
     options: ImportOptions,
@@ -340,7 +251,6 @@ async def _run_db_steps(
             "distance_m": options.distance,
             "status": options.status,
             "dry_run": options.dry_run,
-            "zone_name": options.zone_name,
         },
         affected_count=0,
     )
@@ -358,11 +268,8 @@ async def _run_db_steps(
         report.offerings_created,
         report.existing_skipped,
     )
-    if options.zone_name:
-        progress("Creating coverage zone")
-        report.zone_name = options.zone_name
-        report.zone_action = await upsert_zone(session, options, tech, user.id)
-        log.info("Zone '%s' %s", options.zone_name, report.zone_action)
+    progress("Rebuilding auto zones")
+    report.zones_rebuilt = await rebuild_auto_zones(session, tech.id)
     return report
 
 

@@ -88,9 +88,6 @@ def import_gis(
     download: int | None = typer.Option(None, help="Override max_download_mbps"),
     upload: int | None = typer.Option(None, help="Override max_upload_mbps"),
     dry_run: bool = typer.Option(False, "--dry-run", help="Run everything, roll back at the end"),
-    zone_name: str | None = typer.Option(
-        None, "--zone-name", help="Also create/refresh a coverage ServiceZone with this name"
-    ),
 ):
     """Import network coverage from GIS shapefiles as address offerings."""
     configure_logging()
@@ -103,7 +100,6 @@ def import_gis(
         download=download,
         upload=upload,
         dry_run=dry_run,
-        zone_name=zone_name,
     )
     try:
         asyncio.run(_import_gis(options))
@@ -149,8 +145,8 @@ def _print_report(console: Console, report: ImportReport, options: ImportOptions
     table.add_row("Addresses matched", str(report.addresses_matched))
     table.add_row("Offerings created", f"[green]{report.offerings_created}[/green]")
     table.add_row("Existing skipped", str(report.existing_skipped))
-    if report.zone_name:
-        table.add_row("Zone", f'"{report.zone_name}" ({report.zone_action})')
+    if report.zones_rebuilt:
+        table.add_row("Auto zones", ", ".join(report.zones_rebuilt))
     console.print(table)
 
 

@@ -14,11 +14,9 @@ from app.gis_import import (
     match_addresses,
     resolve_technology,
     resolve_user,
-    upsert_zone,
 )
 from app.models.address import Address, County, Locality, Municipality
 from app.models.admin import BulkOperations, User
-from app.models.service import ServiceZone
 from app.models.technology import Technology, TechnologyType
 
 # Synthetic RC codes far outside real ranges to avoid clashing with imported data.
@@ -260,117 +258,7 @@ async def test_load_temp_geometries_rerun_same_transaction(db_session: AsyncSess
     assert count == 1  # table was replaced, not appended to
 
 
-async def test_upsert_zone_creates_zone_with_coverage_polygon(db_session: AsyncSession) -> None:
-    await _seed_addresses(db_session)
-    tech, user = await _seed_tech_and_user(db_session)
-    await load_temp_geometries(db_session, [TEST_LINE])
-
-    action = await upsert_zone(
-        db_session, _options(zone_name="Test zona", distance=100.0), tech, user.id
-    )
-
-    assert action == "created"
-    row = (
-        await db_session.execute(
-            text(
-                """
-                SELECT z.name,
-                       ST_SRID(z.polygon::geometry) AS srid,
-                       GeometryType(z.polygon::geometry) AS gtype,
-                       ST_Contains(z.polygon::geometry,
-                                   (SELECT point::geometry FROM addresses WHERE rc_code = :near)) AS has_near,
-                       ST_Contains(z.polygon::geometry,
-                                   (SELECT point::geometry FROM addresses WHERE rc_code = :far)) AS has_far,
-                       zo.status, zo.max_download_mbps
-                FROM service_zones z
-                JOIN zone_offerings zo ON zo.zone_id = z.id
-                WHERE z.name = 'Test zona' AND z.deleted_at IS NULL
-                """
-            ),
-            {"near": ADDR_NEAR, "far": ADDR_FAR},
-        )
-    ).one()
-    assert row.srid == 4326
-    assert row.gtype == "MULTIPOLYGON"
-    assert row.has_near is True   # ~30 m from line, buffer 100 m
-    assert row.has_far is False   # ~2 km away
-    assert row.status == "available"
-    assert row.max_download_mbps == 2500
-
-
-async def test_upsert_zone_rejects_ambiguous_name(db_session: AsyncSession) -> None:
-    await _seed_addresses(db_session)
-    tech, user = await _seed_tech_and_user(db_session)
-    db_session.add_all(
-        [
-            ServiceZone(name="Dup zona", created_by=user.id),
-            ServiceZone(name="Dup zona", created_by=user.id),
-        ]
-    )
-    await db_session.flush()
-    await load_temp_geometries(db_session, [TEST_LINE])
-
-    with pytest.raises(GisImportError, match="Multiple active zones"):
-        await upsert_zone(db_session, _options(zone_name="Dup zona"), tech, user.id)
-
-
-async def test_run_db_steps_creates_zone_when_requested(db_session: AsyncSession) -> None:
-    await _seed_addresses(db_session)
-    await _seed_tech_and_user(db_session)
-
-    report = await _run_db_steps(
-        db_session,
-        _options(zone_name="Zona A"),
-        [TEST_LINE],
-        ImportReport(geometries_loaded=1),
-        progress=lambda stage: None,
-    )
-
-    assert report.zone_name == "Zona A"
-    assert report.zone_action == "created"
-    zones = (
-        await db_session.execute(text("SELECT count(*) FROM service_zones WHERE name = 'Zona A'"))
-    ).scalar()
-    assert zones == 1
-
-
-async def test_run_db_steps_zone_rerun_updates_in_place(db_session: AsyncSession) -> None:
-    await _seed_addresses(db_session)
-    await _seed_tech_and_user(db_session)
-
-    first = await _run_db_steps(
-        db_session, _options(zone_name="Zona B"), [TEST_LINE],
-        ImportReport(), progress=lambda stage: None,
-    )
-    second = await _run_db_steps(
-        db_session, _options(zone_name="Zona B", status="planned"), [TEST_LINE],
-        ImportReport(), progress=lambda stage: None,
-    )
-
-    assert first.zone_action == "created"
-    assert second.zone_action == "updated"
-    row = (
-        await db_session.execute(
-            text(
-                """
-                SELECT count(*) AS zones,
-                       (SELECT count(*) FROM zone_offerings zo
-                          JOIN service_zones sz ON sz.id = zo.zone_id
-                         WHERE sz.name = 'Zona B') AS offerings,
-                       (SELECT status FROM zone_offerings zo
-                          JOIN service_zones sz ON sz.id = zo.zone_id
-                         WHERE sz.name = 'Zona B' LIMIT 1) AS status
-                FROM service_zones WHERE name = 'Zona B' AND deleted_at IS NULL
-                """
-            )
-        )
-    ).one()
-    assert row.zones == 1
-    assert row.offerings == 1       # upserted, not duplicated
-    assert row.status == "planned"  # rerun updates the zone offering
-
-
-async def test_run_db_steps_no_zone_without_zone_name(db_session: AsyncSession) -> None:
+async def test_run_db_steps_rebuilds_auto_zone(db_session: AsyncSession) -> None:
     await _seed_addresses(db_session)
     await _seed_tech_and_user(db_session)
 
@@ -378,14 +266,11 @@ async def test_run_db_steps_no_zone_without_zone_name(db_session: AsyncSession) 
         db_session, _options(), [TEST_LINE], ImportReport(), progress=lambda stage: None
     )
 
-    assert report.zone_name is None
-    assert report.zone_action is None
-    zones = (
+    assert report.zones_rebuilt == ["Auto: Test GPON"]
+    row = (
         await db_session.execute(
-            text(
-                "SELECT count(*) FROM service_zones z JOIN users u ON u.id = z.created_by "
-                "WHERE u.username = 'gis_tester'"
-            )
+            text("SELECT source, deleted_at FROM service_zones WHERE name = 'Auto: Test GPON'")
         )
-    ).scalar()
-    assert zones == 0
+    ).one()
+    assert row.source == "auto"
+    assert row.deleted_at is None
