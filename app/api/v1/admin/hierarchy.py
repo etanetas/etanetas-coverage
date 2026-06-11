@@ -34,6 +34,7 @@ class LocalityOut(BaseModel):
     name: str
     type: str
     type_abbr: str | None
+    muni_name: str | None = None
 
 
 class StreetOut(BaseModel):
@@ -106,10 +107,23 @@ async def list_localities(
     q: str | None = Query(None, description="autocomplete prefix/substring"),
 ) -> Page[LocalityOut]:
     where, params = build_where([
-        ("muni_code = :muni_code", {"muni_code": muni_code}) if muni_code is not None else None,
-        ("(name ILIKE :q OR name_k ILIKE :q)", {"q": f"%{q}%"}) if q else None,
+        ("l.muni_code = :muni_code", {"muni_code": muni_code}) if muni_code is not None else None,
+        ("(l.name ILIKE :q OR l.name_k ILIKE :q)", {"q": f"%{q}%"}) if q else None,
     ])
-    total, rows = await _paginated(db, "localities", where, "name", params, page)
+    total = int((await db.execute(
+        text(f"SELECT COUNT(*) FROM localities l {where}"), params
+    )).scalar() or 0)
+    rows = (await db.execute(
+        text(f"""
+            SELECT l.rc_code, l.muni_code, l.name, l.type, l.type_abbr, m.name AS muni_name
+            FROM localities l
+            LEFT JOIN municipalities m ON m.rc_code = l.muni_code
+            {where}
+            ORDER BY l.name
+            LIMIT :limit OFFSET :offset
+        """),
+        {**params, "limit": page.limit, "offset": page.offset},
+    )).mappings().all()
     return Page[LocalityOut](total=total, items=[LocalityOut(**r) for r in rows])
 
 
