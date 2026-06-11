@@ -75,6 +75,17 @@ async def test_patch_auto_zone_rejects_non_custom_name(client, admin_user, auto_
 
 
 @pytest.mark.integration
+async def test_patch_auto_zone_rejects_null_polygon(client, admin_user, auto_zone):
+    _, raw = admin_user
+    resp = await client.patch(
+        f"/api/v1/admin/zones/{auto_zone}",
+        json={"polygon_geojson": None},
+        headers={"X-API-Key": raw},
+    )
+    assert resp.status_code == 422
+
+
+@pytest.mark.integration
 async def test_patch_auto_zone_accepts_custom_name(client, admin_user, auto_zone):
     _, raw = admin_user
     resp = await client.patch(

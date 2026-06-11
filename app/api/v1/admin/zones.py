@@ -195,7 +195,12 @@ async def update_zone(
 
     fields = body.model_fields_set
 
-    non_custom_with_value = {f for f in fields if f not in {"custom_name", "description"} and getattr(body, f) is not None}
+    ALWAYS_BLOCKED_ON_AUTO = {"name", "priority", "polygon_geojson"}
+    non_custom_with_value = {
+        f for f in fields
+        if f not in {"custom_name", "description"}
+        and (getattr(body, f) is not None or f in ALWAYS_BLOCKED_ON_AUTO)
+    }
     if zone.source == "auto" and non_custom_with_value:
         raise HTTPException(
             status_code=422,
