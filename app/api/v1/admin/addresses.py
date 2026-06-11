@@ -1,7 +1,7 @@
 import uuid
 from typing import Annotated, Literal
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Response
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Response
 from pydantic import BaseModel
 from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -10,6 +10,7 @@ from app.api.pagination import Page, PaginationParams, pagination_params
 from app.api.responses import created
 from app.audit import log_action
 from app.auth import require_role
+from app.auto_zones import rebuild_auto_zones_background
 from app.db.address_labels import (  # noqa: F401
     _ADDR_JOINS,
     _FULL_ADDRESS,
@@ -278,6 +279,7 @@ async def list_address_offerings(
 async def create_address_offering(
     rc_code: int,
     body: AddressOfferingCreate,
+    background_tasks: BackgroundTasks,
     current_user: Annotated[User, Depends(require_role("editor", "admin"))],
     db: Annotated[AsyncSession, Depends(get_db)],
     response: Response,
@@ -310,6 +312,7 @@ async def create_address_offering(
         address_code=rc_code,
     )
     await db.commit()
+    background_tasks.add_task(rebuild_auto_zones_background, body.technology_id)
     await db.refresh(offering)
     return created(
         AddressOfferingOut.model_validate(offering),
@@ -322,6 +325,7 @@ async def create_address_offering(
 async def update_address_offering(
     offering_id: uuid.UUID,
     body: AddressOfferingUpdate,
+    background_tasks: BackgroundTasks,
     current_user: Annotated[User, Depends(require_role("editor", "admin"))],
     db: Annotated[AsyncSession, Depends(get_db)],
 ) -> AddressOffering:
@@ -344,6 +348,7 @@ async def update_address_offering(
         address_code=offering.address_code,
     )
     await db.commit()
+    background_tasks.add_task(rebuild_auto_zones_background, offering.technology_id)
     await db.refresh(offering)
     return offering
 
@@ -356,12 +361,14 @@ async def update_address_offering(
 )
 async def delete_address_offering(
     offering_id: uuid.UUID,
+    background_tasks: BackgroundTasks,
     current_user: Annotated[User, Depends(require_role("editor", "admin"))],
     db: Annotated[AsyncSession, Depends(get_db)],
 ) -> None:
     offering = await _require_offering(db, offering_id)
     address_code = offering.address_code
-    tech_name = await technology_display_name(db, offering.technology_id)
+    technology_id = offering.technology_id
+    tech_name = await technology_display_name(db, technology_id)
     addr_label = await address_label_for_code(db, address_code)
     await db.delete(offering)
     await log_action(
@@ -374,6 +381,7 @@ async def delete_address_offering(
         address_code=address_code,
     )
     await db.commit()
+    background_tasks.add_task(rebuild_auto_zones_background, technology_id)
 
 
 async def _require_offering(db: AsyncSession, offering_id: uuid.UUID) -> AddressOffering:

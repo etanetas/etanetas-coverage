@@ -5,7 +5,7 @@ import uuid
 from datetime import date, timedelta
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Request, Response
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, Response
 from pydantic import TypeAdapter
 from sqlalchemy import delete, select, text
 from sqlalchemy.dialects.postgresql import insert as pg_insert
@@ -15,6 +15,7 @@ from app.api.pagination import Page, PaginationParams, pagination_params
 from app.api.responses import created
 from app.audit import log_action
 from app.auth import require_role
+from app.auto_zones import rebuild_auto_zones_background
 from app.config import settings
 from app.db.address_labels import (  # noqa: F401
     _ADDR_JOINS,
@@ -111,6 +112,7 @@ async def bulk_preview(
 async def bulk_execute(
     request: Request,
     body: BulkExecuteRequest,
+    background_tasks: BackgroundTasks,
     response: Response,
     current_user: Annotated[User, Depends(require_role("editor", "admin"))],
     db: Annotated[AsyncSession, Depends(get_db)],
@@ -177,6 +179,7 @@ async def bulk_execute(
         {"type": op_type, "affected_count": len(modified), "technology_name": tech_name},
     )
     await db.commit()
+    background_tasks.add_task(rebuild_auto_zones_background, op.technology_id)
 
     return created(
         BulkExecuteResponse(bulk_operation_id=bulk_op.id, modified_count=len(modified)),
@@ -188,6 +191,7 @@ async def bulk_execute(
 @router.post("/bulk/{bulk_op_id}/rollback", response_model=BulkRollbackResponse, summary="Rollback bulk operation", operation_id="admin.bulk.rollback")
 async def bulk_rollback(
     bulk_op_id: uuid.UUID,
+    background_tasks: BackgroundTasks,
     current_user: Annotated[User, Depends(require_role("editor", "admin"))],
     db: Annotated[AsyncSession, Depends(get_db)],
 ) -> BulkRollbackResponse:
@@ -277,6 +281,7 @@ async def bulk_rollback(
         {"rolled_back_count": affected, "type": rd_type, "technology_name": rb_tech_name},
     )
     await db.commit()
+    background_tasks.add_task(rebuild_auto_zones_background, _rb_tech_uuid)
     return BulkRollbackResponse(rolled_back_count=affected)
 
 
