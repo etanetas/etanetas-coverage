@@ -76,7 +76,7 @@ async def test_availability_structure(client, seed_address):
 
 
 @pytest.mark.integration
-async def test_availability_with_zone_offering(client, db_session, seed_address):
+async def test_availability_ignores_zone_offerings(client, db_session, seed_address):
     stmts = [
         "INSERT INTO technology_types (id, code, display_name, public_name, sort_order) VALUES ('aa000000-0000-0000-0000-000000000001', 'TEST_FIBER', 'Test Fiber', 'Test Fiber', 99) ON CONFLICT DO NOTHING",
         "INSERT INTO technologies (id, type_id, variant_code, display_name, sort_order) VALUES ('bb000000-0000-0000-0000-000000000001', 'aa000000-0000-0000-0000-000000000001', 'test_gpon', 'Test GPON', 99) ON CONFLICT DO NOTHING",
@@ -91,4 +91,25 @@ async def test_availability_with_zone_offering(client, db_session, seed_address)
     assert resp.status_code == 200
     data = resp.json()
     techs = [t["technology"] for t in data["available"]]
-    assert "Test Fiber" in techs
+    # Strefy (auto i reczne) nie wplywaja na dostepnosc — tylko oferty adresowe.
+    assert "Test Fiber" not in techs
+
+
+@pytest.mark.integration
+async def test_availability_returns_address_offering(client, db_session, seed_address):
+    stmts = [
+        "INSERT INTO technology_types (id, code, display_name, public_name, sort_order) VALUES ('aa000000-0000-0000-0000-000000000001', 'TEST_FIBER', 'Test Fiber', 'Test Fiber', 99) ON CONFLICT DO NOTHING",
+        "INSERT INTO technologies (id, type_id, variant_code, display_name, sort_order) VALUES ('bb000000-0000-0000-0000-000000000001', 'aa000000-0000-0000-0000-000000000001', 'test_gpon', 'Test GPON', 99) ON CONFLICT DO NOTHING",
+        "INSERT INTO users (id, username, email, role, active, created_at) VALUES ('cc000000-0000-0000-0000-000000000001', 'testuser_zone', 'testzone@test.lt', 'admin', true, NOW()) ON CONFLICT DO NOTHING",
+        "INSERT INTO address_offerings (id, address_code, technology_id, status, max_download_mbps, max_upload_mbps, status_since, created_by, created_at, updated_at) VALUES ('ff000000-0000-0000-0000-000000000001', 90199901, 'bb000000-0000-0000-0000-000000000001', 'available', 300, 100, CURRENT_DATE, 'cc000000-0000-0000-0000-000000000001', NOW(), NOW()) ON CONFLICT DO NOTHING",
+    ]
+    for stmt in stmts:
+        await db_session.execute(text(stmt))
+
+    resp = await client.get(f"/api/v1/public/addresses/{seed_address}/availability")
+    assert resp.status_code == 200
+    data = resp.json()
+    rows = {t["technology"]: t for t in data["available"]}
+    assert "Test Fiber" in rows
+    assert rows["Test Fiber"]["max_dl_mbps"] == 300
+    assert rows["Test Fiber"]["max_ul_mbps"] == 100

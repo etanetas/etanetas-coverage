@@ -56,51 +56,24 @@ _ADDR_INFO_SQL = text(f"""
     WHERE a.rc_code = :rc_code AND a.deleted_at IS NULL
 """)
 
+# Dostepnosc liczy sie WYLACZNIE z ofert adresowych. Strefy (w tym auto-zony
+# generowane z tych samych ofert) sa czysta wizualizacja — patrz spec
+# docs/superpowers/specs/2026-06-11-coverage-maintenance-model-design.md
 _AVAILABILITY_SQL = text("""
-    WITH addr AS (
-        SELECT rc_code, point FROM addresses WHERE rc_code = :rc_code
-    ),
-    addr_offerings AS (
-        SELECT
-            ao.technology_id,
-            ao.status,
-            ao.max_download_mbps,
-            ao.max_upload_mbps,
-            ao.planned_until
-        FROM address_offerings ao
-        WHERE ao.address_code = :rc_code
-    ),
-    zone_offerings_filtered AS (
-        SELECT DISTINCT ON (zo.technology_id)
-            zo.technology_id,
-            zo.status,
-            zo.max_download_mbps,
-            zo.max_upload_mbps,
-            zo.planned_until
-        FROM zone_offerings zo
-        JOIN service_zones sz ON sz.id = zo.zone_id AND sz.deleted_at IS NULL
-        JOIN addr a ON ST_Contains(sz.polygon, a.point)
-        WHERE zo.technology_id NOT IN (SELECT technology_id FROM addr_offerings)
-        ORDER BY zo.technology_id, sz.priority DESC
-    ),
-    combined AS (
-        SELECT * FROM addr_offerings
-        UNION ALL
-        SELECT * FROM zone_offerings_filtered
-    )
     SELECT
-        tt.public_name         AS technology,
-        MAX(c.max_download_mbps) AS max_dl_mbps,
-        MAX(c.max_upload_mbps)   AS max_ul_mbps,
-        c.status,
-        MIN(c.planned_until)     AS planned_until
-    FROM combined c
-    JOIN technologies t ON t.id = c.technology_id
+        tt.public_name            AS technology,
+        MAX(ao.max_download_mbps) AS max_dl_mbps,
+        MAX(ao.max_upload_mbps)   AS max_ul_mbps,
+        ao.status,
+        MIN(ao.planned_until)     AS planned_until
+    FROM address_offerings ao
+    JOIN technologies t ON t.id = ao.technology_id
     JOIN technology_types tt ON tt.id = t.type_id
-    WHERE c.status IN ('available', 'planned')
+    WHERE ao.address_code = :rc_code
+      AND ao.status IN ('available', 'planned')
       AND tt.deleted_at IS NULL
       AND t.deleted_at IS NULL
-    GROUP BY tt.id, tt.public_name, tt.sort_order, c.status
+    GROUP BY tt.id, tt.public_name, tt.sort_order, ao.status
     ORDER BY tt.sort_order
 """)
 
