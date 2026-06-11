@@ -227,8 +227,11 @@ async def test_run_db_steps_end_to_end(db_session: AsyncSession) -> None:
     bulk_op = (
         await db_session.execute(
             text(
-                "SELECT operation_type, affected_count FROM bulk_operations"
-                " WHERE operation_type = 'gis_import'"
+                """
+                SELECT bo.operation_type, bo.affected_count
+                FROM bulk_operations bo JOIN users u ON u.id = bo.user_id
+                WHERE bo.operation_type = 'gis_import' AND u.username = 'gis_tester'
+                """
             )
         )
     ).one()
@@ -351,8 +354,12 @@ async def test_run_db_steps_zone_rerun_updates_in_place(db_session: AsyncSession
             text(
                 """
                 SELECT count(*) AS zones,
-                       (SELECT count(*) FROM zone_offerings) AS offerings,
-                       (SELECT status FROM zone_offerings LIMIT 1) AS status
+                       (SELECT count(*) FROM zone_offerings zo
+                          JOIN service_zones sz ON sz.id = zo.zone_id
+                         WHERE sz.name = 'Zona B') AS offerings,
+                       (SELECT status FROM zone_offerings zo
+                          JOIN service_zones sz ON sz.id = zo.zone_id
+                         WHERE sz.name = 'Zona B' LIMIT 1) AS status
                 FROM service_zones WHERE name = 'Zona B' AND deleted_at IS NULL
                 """
             )
@@ -373,5 +380,12 @@ async def test_run_db_steps_no_zone_without_zone_name(db_session: AsyncSession) 
 
     assert report.zone_name is None
     assert report.zone_action is None
-    zones = (await db_session.execute(text("SELECT count(*) FROM service_zones"))).scalar()
+    zones = (
+        await db_session.execute(
+            text(
+                "SELECT count(*) FROM service_zones z JOIN users u ON u.id = z.created_by "
+                "WHERE u.username = 'gis_tester'"
+            )
+        )
+    ).scalar()
     assert zones == 0
