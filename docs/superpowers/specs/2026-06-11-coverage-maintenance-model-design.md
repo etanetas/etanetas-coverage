@@ -28,6 +28,15 @@ Zakres obejmuje dwa repozytoria: API (`etanetas-coverage`) i plugin LMS
 5. **Moduł zarządzania strefami ręcznymi (`etacoveragezones`, pkt E roadmapy
    pluginu): skreślony.** Strefy `manual` zostają w bazie jako uśpiony koncept
    bez UI i bez wpływu na availability.
+6. **Jeden schemat edycji oferty pojedynczego adresu: na mapie.** Klik w
+   pineskę → formularz dodania/edycji oferty w panelu mapy (te same endpointy
+   `/admin/addresses/{rc}/offerings`), bez przekierowania.
+   `etacoverageaddress` zostaje jako widok szczegółów i historii adresu
+   (link „szczegóły →" w popupie).
+7. **Różne prędkości tej samej technologii na różnych adresach są poprawne
+   z założenia** — prędkość to atrybut oferty adresowej i availability zwraca
+   wartości per adres. Strefa pokazuje na mapie agregat „do X Mbps"
+   (MAX po adresach obszaru) wyłącznie poglądowo.
 
 ## Etap 1 — uszczelnienie modelu (API, małe)
 
@@ -80,6 +89,18 @@ Zakres obejmuje dwa repozytoria: API (`etanetas-coverage`) i plugin LMS
 Triggery rebuildu bez zmian (offering CRUD, bulk execute/rollback,
 import-gis, CLI `rebuild-zones`).
 
+### Luki w pokryciu — adresy w strefie bez oferty
+
+`GET /admin/zones/{id}/addresses`:
+
+- `has_override` zmienia semantykę: `true` gdy adres ma ofertę dla
+  **technologii tej strefy** (dziś: jakąkolwiek ofertę — mylące).
+- nowy parametr `without_offering=true` — tylko adresy bez oferty dla
+  technologii strefy (luka = budynek wewnątrz bufora, np. między dwoma
+  pokrytymi, bez własnej oferty).
+- `ZoneDetail` (`?expand=detail`): nowe pole `gap_count` obok
+  `address_count`.
+
 ### Skala
 
 Komponentów będzie kilkadziesiąt maksymalnie (miejscowości w rejonie);
@@ -89,14 +110,21 @@ dopasowanie par to iloczyn rzędu dziesiątek × dziesiątek — bez optymalizac
 
 Moduł `etacoveragemap`:
 
-- **Filtry nad mapą:** technologia (lista z `/admin/technologies`), źródło
-  strefy (auto / ręczne / wszystkie), pokaż-ukryj punkty adresowe. Filtrowanie
-  po `properties` GeoJSON po stronie JS.
+- **Filtry nad mapą:** technologia — checkboxy per typ (GPON, LTE, …) z
+  `/admin/technology-types`; źródło strefy (auto / ręczne / wszystkie);
+  pokaż-ukryj punkty adresowe. Filtrowanie po stronie JS: strefy po
+  `properties.offerings[].technology_type` i `properties.source`
+  (oba już w GeoJSON po etapach 1-2).
 - **Klik w strefę auto:** panel boczny — nazwa efektywna (z możliwością
-  zmiany `custom_name` → `PATCH /admin/zones/{id}`), technologia, licznik
-  adresów (`address_count` z `?expand=detail`), lista adresów
-  (`/admin/zones/{id}/addresses`, kolumna `has_override`), link per adres do
-  `?m=etacoverageaddress`.
+  zmiany `custom_name` → `PATCH /admin/zones/{id}`), technologia, liczniki
+  `address_count` i **`gap_count`** (z `?expand=detail`), lista adresów
+  (`/admin/zones/{id}/addresses`) z przełącznikiem „tylko luki"
+  (`without_offering=true`), link per adres do `?m=etacoverageaddress`.
+- **Klik w pineskę adresu:** popup z dostępnością + formularz
+  dodaj/edytuj/usuń ofertę bezpośrednio w panelu mapy
+  (`POST/PATCH/DELETE /admin/addresses/{rc}/offerings…`). Zastępuje obecne
+  przekierowanie do `etacoverageaddress`; tam zostaje link „szczegóły →"
+  (pełny widok + historia zmian).
 
 ## Etap 4 — mapa LMS: edycja pokrycia rysowaniem (plugin)
 
@@ -131,6 +159,9 @@ podgląd mapy bez zmian.
   i listę ofert `status='planned'` z `planned_until < today`; wyświetlenie w
   `etacoveragestats`. Tylko raport — zmiana statusu to decyzja człowieka
   (bulkiem albo per adres).
+- Raport „luki w pokryciu" w `/admin/coverage/stats`: suma `gap_count` po
+  aktywnych strefach auto + rozbicie per strefa (nazwa, technologia, luki /
+  adresy ogółem); wyświetlenie w `etacoveragestats` z linkiem do mapy.
 
 ## Poza zakresem
 
@@ -155,6 +186,10 @@ API (integracyjne, wzorzec istniejących testów rebuildu):
 6. Prędkości `ZoneOffering` = MAX per komponent, nie globalnie.
 7. `import-gis --mode diff` raportuje osierocone oferty; `--remove-orphans`
    tworzy operację bulk z rollbackiem.
+8. Luki: adres wewnątrz polygonu bez oferty technologii strefy widoczny przy
+   `without_offering=true` i wliczony w `gap_count`; adres z ofertą innej
+   technologii nadal liczony jako luka tej strefy; `has_override` reaguje
+   tylko na ofertę technologii strefy.
 
 Plugin: testy ręczne UI (filtry, panel strefy, pełny przebieg rysowanie →
 preview → execute → rollback).
