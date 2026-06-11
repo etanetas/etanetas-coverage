@@ -13,6 +13,7 @@ from sqlalchemy import (
     Integer,
     Text,
     UniqueConstraint,
+    text,
 )
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -66,6 +67,11 @@ class AddressOffering(Base):
         Index("idx_address_offerings_tech", "technology_id"),
         Index("idx_address_offerings_status", "status"),
         Index("idx_address_offerings_bulk", "bulk_operation_id"),
+        Index(
+            "idx_address_offerings_tech_available",
+            "technology_id",
+            postgresql_where=text("status = 'available'"),
+        ),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)

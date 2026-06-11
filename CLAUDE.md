@@ -35,7 +35,10 @@ uv run python -m app.cli create-admin --username X --email Y --password Z
 
 # Import GIS network shapefiles as address offerings (dry-run first!)
 uv run python -m app.cli import-gis --shapefile X.shp [--shapefile Y.shp] \
-  --technology gpon --distance 100 --username U [--zone-name "Zone"] [--dry-run]
+  --technology gpon --distance 100 --username U [--dry-run]
+
+# Rebuild auto-zones (ServiceZone derived from address offerings)
+uv run python -m app.cli rebuild-zones [--technology gpon] [--radius 150]
 ```
 
 ```bash

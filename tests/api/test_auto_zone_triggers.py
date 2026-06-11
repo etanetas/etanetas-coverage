@@ -150,11 +150,13 @@ async def test_delete_offering_schedules_rebuild(client, admin_user, seed_addres
         headers={"X-API-Key": raw},
     )
     offering_id = created.json()["id"]
+    rebuild_recorder.clear()
+
     resp = await client.delete(
         f"/api/v1/admin/addresses/offerings/{offering_id}", headers={"X-API-Key": raw}
     )
     assert resp.status_code == 204
-    assert rebuild_recorder == [tech.id, tech.id]  # create + delete
+    assert rebuild_recorder == [tech.id]
 
 
 @pytest.mark.integration

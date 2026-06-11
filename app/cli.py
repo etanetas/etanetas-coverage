@@ -14,9 +14,16 @@ from rich.progress import Progress, SpinnerColumn, TextColumn
 from rich.table import Table
 from sqlalchemy import select
 
+from app.auto_zones import AUTO_ZONE_RADIUS_M, rebuild_auto_zones
 from app.config import settings
 from app.database import AsyncSessionLocal
-from app.gis_import import GisImportError, ImportOptions, ImportReport, run_import
+from app.gis_import import (
+    GisImportError,
+    ImportOptions,
+    ImportReport,
+    resolve_technology,
+    run_import,
+)
 from app.logging_config import configure_logging
 from app.models.admin import ApiKey, User
 from app.time import now
@@ -109,6 +116,38 @@ def import_gis(
     except Exception as e:
         rprint(f"[red]ERROR: {type(e).__name__}: {e}[/red]", file=sys.stderr)
         raise typer.Exit(code=1) from None
+
+
+@app.command("rebuild-zones")
+def rebuild_zones(
+    technology: str | None = typer.Option(
+        None, help="Technology variant_code (e.g. gpon); omit to rebuild all"
+    ),
+    radius: float = typer.Option(AUTO_ZONE_RADIUS_M, help="Buffer radius in meters around addresses"),
+):
+    """Rebuild auto-zones from address offerings."""
+    configure_logging()
+    try:
+        asyncio.run(_rebuild_zones(technology, radius))
+    except GisImportError as e:
+        rprint(f"[red]ERROR: {e}[/red]", file=sys.stderr)
+        raise typer.Exit(code=1) from None
+    except Exception as e:
+        rprint(f"[red]ERROR: {type(e).__name__}: {e}[/red]", file=sys.stderr)
+        raise typer.Exit(code=1) from None
+
+
+async def _rebuild_zones(technology: str | None, radius: float) -> None:
+    async with AsyncSessionLocal() as session:
+        tech_id = None
+        if technology is not None:
+            tech_id = (await resolve_technology(session, technology)).id
+        rebuilt = await rebuild_auto_zones(session, tech_id, radius_m=radius)
+        await session.commit()
+    if rebuilt:
+        rprint(f"[green]Rebuilt {len(rebuilt)} auto zone(s):[/green] " + ", ".join(rebuilt))
+    else:
+        rprint("[yellow]No auto zones to rebuild (no offerings found).[/yellow]")
 
 
 def _swap_console_handler_for_rich(console: Console) -> None:
