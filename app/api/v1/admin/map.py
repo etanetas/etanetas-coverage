@@ -120,7 +120,8 @@ async def map_zones_geojson(
                     END,
                     'properties', json_build_object(
                         'id', z.id,
-                        'name', z.name,
+                        'name', COALESCE(z.custom_name, z.name),
+                        'source', z.source,
                         'priority', z.priority,
                         'offerings', (
                             SELECT json_agg(json_build_object(

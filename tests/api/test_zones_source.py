@@ -138,3 +138,18 @@ async def test_patch_manual_zone_still_accepts_name(client, admin_user):
     )
     assert resp.status_code == 200
     assert resp.json()["name"] == "Zmieniona"
+
+
+@pytest.mark.integration
+async def test_zones_geojson_has_source_and_effective_name(client, admin_user, auto_zone, db_session):
+    _, raw = admin_user
+    await db_session.execute(
+        text("UPDATE service_zones SET custom_name = 'Moja nazwa' WHERE id = CAST(:id AS uuid)"),
+        {"id": str(auto_zone)},
+    )
+    resp = await client.get("/api/v1/admin/map/zones/geojson", headers={"X-API-Key": raw})
+    assert resp.status_code == 200
+    features = resp.json()["features"]
+    props = next(f["properties"] for f in features if f["properties"]["id"] == str(auto_zone))
+    assert props["source"] == "auto"
+    assert props["name"] == "Moja nazwa"  # nazwa efektywna = COALESCE(custom_name, name)
