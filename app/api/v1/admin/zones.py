@@ -102,10 +102,18 @@ async def get_zone(
         """), {"id": str(zone_id)})).mappings().first()
 
         count_row = (await db.execute(text("""
-            SELECT COUNT(*) AS cnt
+            SELECT
+                COUNT(*) AS cnt,
+                COUNT(*) FILTER (WHERE NOT EXISTS(
+                    SELECT 1 FROM address_offerings ao
+                    JOIN zone_offerings zo ON zo.technology_id = ao.technology_id
+                    WHERE zo.zone_id = z.id AND ao.address_code = a.rc_code
+                )) AS gaps
             FROM addresses a
             JOIN service_zones z ON ST_Contains(z.polygon::geometry, a.point::geometry)
-            WHERE z.id = CAST(:id AS uuid) AND a.deleted_at IS NULL
+            WHERE z.id = CAST(:id AS uuid)
+              AND a.deleted_at IS NULL
+              AND a.address_type = 'building'
         """), {"id": str(zone_id)})).first()
 
         offerings_result = await db.execute(
@@ -125,6 +133,7 @@ async def get_zone(
             created_at=zone.created_at,
             offerings=offerings,
             address_count=int(count_row[0]) if count_row and zone.polygon is not None else 0,
+            gap_count=int(count_row[1]) if count_row and zone.polygon is not None else 0,
         )
     else:
         return ZoneOut(
@@ -365,7 +374,15 @@ class ZoneAddressItem(BaseModel):
     rc_code: int
     full_address: str
     postal_code: str | None
-    has_override: bool  # True if this address has its own address_offering
+    has_override: bool  # True if this address has an offering for the zone's technology
+
+
+# Subquery: address has an offering for any technology of this zone.
+_ZONE_TECH_OFFERING_EXISTS = """EXISTS(
+            SELECT 1 FROM address_offerings ao
+            JOIN zone_offerings zo ON zo.technology_id = ao.technology_id
+            WHERE zo.zone_id = z.id AND ao.address_code = a.rc_code
+        )"""
 
 
 @router.get("/{zone_id}/addresses", response_model=Page[ZoneAddressItem], summary="List addresses in zone", operation_id="admin.zones.addresses.list")
@@ -374,26 +391,32 @@ async def list_zone_addresses(
     current_user: Annotated[User, Depends(require_role("viewer", "editor", "admin"))],
     db: Annotated[AsyncSession, Depends(get_db)],
     page: Annotated[PaginationParams, Depends(pagination_params)],
+    without_offering: Annotated[
+        bool, Query(description="only addresses lacking an offering for the zone's technologies (coverage gaps)")
+    ] = False,
 ) -> Page[ZoneAddressItem]:
     """List addresses (buildings) inside a zone's polygon. Paginated."""
     await _require_zone(db, zone_id)
 
-    total_row = await db.execute(text("""
+    gap_clause = f"AND NOT {_ZONE_TECH_OFFERING_EXISTS}" if without_offering else ""
+
+    total_row = await db.execute(text(f"""
         SELECT COUNT(*) FROM addresses a
         JOIN service_zones z ON ST_Contains(z.polygon::geometry, a.point::geometry)
         WHERE z.id = CAST(:zid AS uuid)
           AND z.deleted_at IS NULL
           AND a.deleted_at IS NULL
           AND a.address_type = 'building'
+          {gap_clause}
     """), {"zid": str(zone_id)})
     total = int(total_row.scalar() or 0)
 
-    rows = (await db.execute(text("""
+    rows = (await db.execute(text(f"""
         SELECT
             a.rc_code,
             (COALESCE(s.name || ' ', '') || a.house_no || ', ' || l.name) AS full_address,
             a.postal_code,
-            EXISTS(SELECT 1 FROM address_offerings ao WHERE ao.address_code = a.rc_code) AS has_override
+            {_ZONE_TECH_OFFERING_EXISTS} AS has_override
         FROM addresses a
         JOIN service_zones z ON ST_Contains(z.polygon::geometry, a.point::geometry)
         JOIN localities l ON l.rc_code = a.locality_code
@@ -402,6 +425,7 @@ async def list_zone_addresses(
           AND z.deleted_at IS NULL
           AND a.deleted_at IS NULL
           AND a.address_type = 'building'
+          {gap_clause}
         ORDER BY a.rc_code
         LIMIT :limit OFFSET :offset
     """), {"zid": str(zone_id), "limit": page.limit, "offset": page.offset})).mappings().all()

@@ -205,9 +205,10 @@ class ZoneOut(BaseModel):
 
 
 class ZoneDetail(ZoneOut):
-    """Full zone detail including offerings and address count."""
+    """Full zone detail including offerings, address count and coverage gaps."""
     offerings: list[ZoneOfferingOut]
     address_count: int
+    gap_count: int  # buildings inside the polygon lacking an offering for the zone's technologies
 
 
 class ZoneCreate(BaseModel):
