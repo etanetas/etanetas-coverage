@@ -266,10 +266,10 @@ async def test_run_db_steps_rebuilds_auto_zone(db_session: AsyncSession) -> None
         db_session, _options(), [TEST_LINE], ImportReport(), progress=lambda stage: None
     )
 
-    assert report.zones_rebuilt == ["Auto: Test GPON"]
+    assert report.zones_rebuilt == ["Auto: Test GPON — Testkaimis"]
     row = (
         await db_session.execute(
-            text("SELECT source, deleted_at FROM service_zones WHERE name = 'Auto: Test GPON'")
+            text("SELECT source, deleted_at FROM service_zones WHERE name = 'Auto: Test GPON — Testkaimis'")
         )
     ).one()
     assert row.source == "auto"
