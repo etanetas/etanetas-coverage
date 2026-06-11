@@ -62,6 +62,7 @@ async def map_addresses(
                         SELECT 1 FROM service_zones z
                         JOIN zone_offerings zo ON zo.zone_id = z.id
                         WHERE z.polygon IS NOT NULL
+                          AND z.deleted_at IS NULL
                           AND ST_Contains(z.polygon::geometry, a.point::geometry)
                     )
                 )

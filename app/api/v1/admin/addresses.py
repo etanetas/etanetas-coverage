@@ -64,7 +64,7 @@ async def list_addresses(
             " OR EXISTS ("
             "    SELECT 1 FROM service_zones sz"
             "    JOIN zone_offerings zo ON zo.zone_id = sz.id"
-            "    WHERE sz.polygon IS NOT NULL AND a.point IS NOT NULL"
+            "    WHERE sz.polygon IS NOT NULL AND sz.deleted_at IS NULL AND a.point IS NOT NULL"
             "      AND ST_Contains(sz.polygon::geometry, a.point::geometry)"
             ")"
             ")",
@@ -173,6 +173,7 @@ async def get_address_zone_coverage(
                     SELECT COUNT(DISTINCT sz.id)
                     FROM addresses a
                     JOIN service_zones sz ON sz.polygon IS NOT NULL
+                        AND sz.deleted_at IS NULL
                         AND ST_Contains(sz.polygon::geometry, a.point::geometry)
                     WHERE a.rc_code = :rc_code AND a.deleted_at IS NULL
                 """),
@@ -204,7 +205,7 @@ async def get_address_zone_coverage(
             FROM service_zones sz2
             JOIN addresses a2 ON sz2.polygon IS NOT NULL
                 AND ST_Contains(sz2.polygon::geometry, a2.point::geometry)
-            WHERE a2.rc_code = :rc_code AND a2.deleted_at IS NULL
+            WHERE a2.rc_code = :rc_code AND a2.deleted_at IS NULL AND sz2.deleted_at IS NULL
             ORDER BY sz2.priority DESC, sz2.name
             LIMIT :limit OFFSET :offset
         ) sz ON TRUE
