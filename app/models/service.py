@@ -22,6 +22,9 @@ from app.models.base import Base
 
 class ServiceZone(Base):
     __tablename__ = "service_zones"
+    __table_args__ = (
+        CheckConstraint("source IN ('manual', 'auto')", name="ck_service_zones_source"),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
     name: Mapped[str] = mapped_column(Text)

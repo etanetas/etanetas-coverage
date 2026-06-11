@@ -182,6 +182,7 @@ async def update_zone(
     current_user: Annotated[User, Depends(require_role("editor", "admin"))],
     db: Annotated[AsyncSession, Depends(get_db)],
 ) -> ZoneOut:
+    """Update a zone. Editing an auto zone (source='auto') is allowed, but the next rebuild overwrites its polygon."""
     zone = await _require_zone(db, zone_id)
 
     fields = body.model_fields_set
