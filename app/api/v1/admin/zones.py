@@ -51,7 +51,7 @@ async def list_zones(
     params["offset"] = page.offset
     rows = (await db.execute(text(f"""
         SELECT
-            id, name, description, priority, created_at,
+            id, name, custom_name, source, description, priority, created_at,
             polygon IS NOT NULL AS has_polygon,
             CASE WHEN polygon IS NOT NULL
                  THEN ST_AsGeoJSON(ST_SimplifyPreserveTopology(polygon::geometry, 0.001))::jsonb
@@ -65,6 +65,8 @@ async def list_zones(
     items = [ZoneOut(
         id=r["id"],
         name=r["name"],
+        custom_name=r["custom_name"],
+        source=r["source"],
         description=r["description"],
         priority=r["priority"],
         has_polygon=r["has_polygon"],
@@ -114,6 +116,8 @@ async def get_zone(
         return ZoneDetail(
             id=zone.id,
             name=zone.name,
+            custom_name=zone.custom_name,
+            source=zone.source,
             description=zone.description,
             priority=zone.priority,
             has_polygon=zone.polygon is not None,
@@ -126,6 +130,8 @@ async def get_zone(
         return ZoneOut(
             id=zone.id,
             name=zone.name,
+            custom_name=zone.custom_name,
+            source=zone.source,
             description=zone.description,
             priority=zone.priority,
             has_polygon=zone.polygon is not None,
@@ -164,6 +170,8 @@ async def create_zone(
         ZoneOut(
             id=zone.id,
             name=zone.name,
+            custom_name=None,
+            source=zone.source,
             description=zone.description,
             priority=zone.priority,
             has_polygon=zone.polygon is not None,
@@ -182,10 +190,19 @@ async def update_zone(
     current_user: Annotated[User, Depends(require_role("editor", "admin"))],
     db: Annotated[AsyncSession, Depends(get_db)],
 ) -> ZoneOut:
-    """Update a zone. Editing an auto zone (source='auto') is allowed, but the next rebuild overwrites its polygon."""
+    """Update a zone. Auto zones (source='auto') accept only custom_name; other fields are managed by the rebuild."""
     zone = await _require_zone(db, zone_id)
 
     fields = body.model_fields_set
+
+    if zone.source == "auto" and (fields - {"custom_name"}):
+        raise HTTPException(
+            status_code=422,
+            detail="Auto zones accept only custom_name updates; polygon/name/priority are managed by the rebuild",
+        )
+
+    if "custom_name" in fields:
+        zone.custom_name = body.custom_name
 
     if "name" in fields and body.name is not None:
         zone.name = body.name
@@ -214,6 +231,8 @@ async def update_zone(
     return ZoneOut(
         id=zone.id,
         name=zone.name,
+        custom_name=zone.custom_name,
+        source=zone.source,
         description=zone.description,
         priority=zone.priority,
         has_polygon=zone.polygon is not None,

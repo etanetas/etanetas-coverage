@@ -180,6 +180,8 @@ class ZoneOfferingUpdate(BaseModel):
 class ZoneOut(BaseModel):
     id: uuid.UUID
     name: str
+    custom_name: str | None = None
+    source: str = "manual"
     description: str | None
     priority: int
     has_polygon: bool
@@ -217,6 +219,7 @@ class ZoneCreate(BaseModel):
 
 class ZoneUpdate(BaseModel):
     name: str | None = None
+    custom_name: str | None = None
     description: str | None = None
     priority: int | None = None
     polygon_geojson: PolygonGeoJSON | None = None
