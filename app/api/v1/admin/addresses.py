@@ -49,6 +49,7 @@ async def list_addresses(
     address_type: Annotated[Literal["building", "premises"] | None, Query()] = None,
     has_point: Annotated[bool, Query()] = False,
     has_offering: Annotated[bool, Query()] = False,
+    technology_id: Annotated[str | None, Query()] = None,
 ) -> Page[AddressSearchResult]:
     use_fuzzy = q is not None and len(q) >= 2
 
@@ -70,6 +71,10 @@ async def list_addresses(
             ")",
             {},
         ) if has_offering else None,
+        (
+            "EXISTS (SELECT 1 FROM address_offerings ao WHERE ao.address_code = a.rc_code AND ao.technology_id = :technology_id)",
+            {"technology_id": technology_id},
+        ) if technology_id else None,
         (
             "("
             "s.full_name % :q"
