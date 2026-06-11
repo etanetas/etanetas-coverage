@@ -32,6 +32,9 @@ class ServiceZone(Base):
     polygon: Mapped[str | None] = mapped_column(Geometry("MULTIPOLYGON", srid=4326))
     priority: Mapped[int] = mapped_column(Integer, default=100)
     source: Mapped[str] = mapped_column(Text, default="manual", server_default="manual")
+    # Nazwa wlasna nadana przez uzytkownika strefie auto; przezywa rebuildy.
+    # Nazwa efektywna = COALESCE(custom_name, name).
+    custom_name: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(TIMESTAMP, default=datetime.now)
     updated_at: Mapped[datetime | None] = mapped_column(TIMESTAMP, onupdate=datetime.now)
     created_by: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id"))
