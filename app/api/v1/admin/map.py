@@ -58,6 +58,10 @@ async def map_addresses(
                     'has_address_offering', EXISTS(
                         SELECT 1 FROM address_offerings ao WHERE ao.address_code = a.rc_code
                     ),
+                    'has_available_offering', EXISTS(
+                        SELECT 1 FROM address_offerings ao
+                        WHERE ao.address_code = a.rc_code AND ao.status = 'available'
+                    ),
                     'has_zone_offering', EXISTS(
                         SELECT 1 FROM service_zones z
                         JOIN zone_offerings zo ON zo.zone_id = z.id
