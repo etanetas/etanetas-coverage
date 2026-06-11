@@ -89,6 +89,29 @@ async def test_patch_auto_zone_accepts_custom_name(client, admin_user, auto_zone
 
 
 @pytest.mark.integration
+async def test_patch_auto_zone_rejects_mixed_fields(client, admin_user, auto_zone):
+    _, raw = admin_user
+    resp = await client.patch(
+        f"/api/v1/admin/zones/{auto_zone}",
+        json={"custom_name": "Centrum", "priority": 50},
+        headers={"X-API-Key": raw},
+    )
+    assert resp.status_code == 422
+
+
+@pytest.mark.integration
+async def test_patch_auto_zone_accepts_description(client, admin_user, auto_zone):
+    _, raw = admin_user
+    resp = await client.patch(
+        f"/api/v1/admin/zones/{auto_zone}",
+        json={"description": "Opis strefy"},
+        headers={"X-API-Key": raw},
+    )
+    assert resp.status_code == 200
+    assert resp.json()["description"] == "Opis strefy"
+
+
+@pytest.mark.integration
 async def test_patch_manual_zone_still_accepts_name(client, admin_user):
     _, raw = admin_user
     created = await client.post(

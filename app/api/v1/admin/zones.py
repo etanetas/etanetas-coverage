@@ -190,15 +190,16 @@ async def update_zone(
     current_user: Annotated[User, Depends(require_role("editor", "admin"))],
     db: Annotated[AsyncSession, Depends(get_db)],
 ) -> ZoneOut:
-    """Update a zone. Auto zones (source='auto') accept only custom_name; other fields are managed by the rebuild."""
+    """Update a zone. Auto zones (source='auto') accept only custom_name and description; polygon/name/priority are managed by the rebuild."""
     zone = await _require_zone(db, zone_id)
 
     fields = body.model_fields_set
 
-    if zone.source == "auto" and (fields - {"custom_name"}):
+    non_custom_with_value = {f for f in fields if f not in {"custom_name", "description"} and getattr(body, f) is not None}
+    if zone.source == "auto" and non_custom_with_value:
         raise HTTPException(
             status_code=422,
-            detail="Auto zones accept only custom_name updates; polygon/name/priority are managed by the rebuild",
+            detail="Auto zones accept only custom_name and description updates; polygon/name/priority are managed by the rebuild",
         )
 
     if "custom_name" in fields:
@@ -224,7 +225,7 @@ async def update_zone(
                 {"gj": body.polygon_geojson.model_dump_json(), "id": str(zone_id)},
             )
 
-    changes = body.model_dump(exclude_none=True, exclude={"polygon_geojson"})
+    changes = {k: getattr(body, k) for k in fields if k != "polygon_geojson"}
     await log_action(db, current_user.id, "service_zone", str(zone_id), "update", changes or None)
     await db.commit()
     await db.refresh(zone)
