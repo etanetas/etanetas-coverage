@@ -11,7 +11,14 @@ from app.config import settings
 from app.dependencies import get_db
 from app.errors import raise_error
 from app.models.admin import User
-from app.schemas.admin import CoverageStats, StatusBreakdown, UncoveredLocality
+from app.db.address_labels import _ADDR_JOINS, _FULL_ADDRESS
+from app.schemas.admin import (
+    AutoZoneGapItem,
+    CoverageStats,
+    PlannedOverdueItem,
+    StatusBreakdown,
+    UncoveredLocality,
+)
 
 router = APIRouter(prefix="/api/v1/admin/coverage", tags=["admin-stats"])
 
@@ -246,6 +253,74 @@ async def get_coverage_stats(
         )
     ).mappings().all()
 
+    planned_overdue_count = await db.scalar(
+        text(f"""
+        SELECT COUNT(*)
+        FROM address_offerings ao
+        JOIN addresses a ON a.rc_code = ao.address_code
+        WHERE ao.status = 'planned'
+          AND ao.planned_until IS NOT NULL
+          AND ao.planned_until < CURRENT_DATE
+          AND a.deleted_at IS NULL
+          {address_filter}
+    """),
+        address_params,
+    ) or 0
+
+    overdue_rows = (
+        await db.execute(
+            text(f"""
+        SELECT
+            ao.address_code,
+            ({_FULL_ADDRESS}) AS full_address,
+            tt.public_name AS technology,
+            ao.planned_until
+        FROM address_offerings ao
+        JOIN addresses a ON a.rc_code = ao.address_code
+        {_ADDR_JOINS}
+        JOIN technologies t ON t.id = ao.technology_id
+        JOIN technology_types tt ON tt.id = t.type_id
+        WHERE ao.status = 'planned'
+          AND ao.planned_until IS NOT NULL
+          AND ao.planned_until < CURRENT_DATE
+          AND a.deleted_at IS NULL
+          {address_filter}
+        ORDER BY ao.planned_until
+        LIMIT 50
+    """),
+            address_params,
+        )
+    ).mappings().all()
+
+    gap_rows = (
+        await db.execute(
+            text("""
+        SELECT
+            COALESCE(z.custom_name, z.name) AS zone_name,
+            t.display_name AS technology,
+            COUNT(a.rc_code) AS address_count,
+            COUNT(a.rc_code) FILTER (WHERE NOT EXISTS(
+                SELECT 1 FROM address_offerings ao
+                WHERE ao.address_code = a.rc_code
+                  AND ao.technology_id = zo.technology_id
+            )) AS gap_count
+        FROM service_zones z
+        JOIN zone_offerings zo ON zo.zone_id = z.id
+        JOIN technologies t ON t.id = zo.technology_id
+        LEFT JOIN addresses a
+          ON a.deleted_at IS NULL
+         AND a.address_type = 'building'
+         AND a.point IS NOT NULL
+         AND ST_Contains(z.polygon::geometry, a.point::geometry)
+        WHERE z.source = 'auto'
+          AND z.deleted_at IS NULL
+          AND z.polygon IS NOT NULL
+        GROUP BY z.id, z.custom_name, z.name, t.display_name
+        ORDER BY gap_count DESC
+    """)
+        )
+    ).mappings().all()
+
     return CoverageStats(
         total_buildings=int(total_buildings),
         covered_buildings=int(covered),
@@ -258,4 +333,8 @@ async def get_coverage_stats(
         scope=scope,
         scope_label=scope_label,
         scope_municipalities=scope_names,
+        planned_overdue_count=int(planned_overdue_count),
+        planned_overdue=[PlannedOverdueItem(**r) for r in overdue_rows],
+        auto_zone_gaps_total=sum(int(r["gap_count"]) for r in gap_rows),
+        auto_zone_gaps=[AutoZoneGapItem(**r) for r in gap_rows],
     )

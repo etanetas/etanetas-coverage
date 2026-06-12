@@ -435,6 +435,20 @@ class UncoveredLocality(BaseModel):
     uncovered_count: int
 
 
+class PlannedOverdueItem(BaseModel):
+    address_code: int
+    full_address: str
+    technology: str
+    planned_until: date
+
+
+class AutoZoneGapItem(BaseModel):
+    zone_name: str
+    technology: str
+    gap_count: int
+    address_count: int
+
+
 class CoverageStats(BaseModel):
     total_buildings: int
     covered_buildings: int
@@ -447,3 +461,7 @@ class CoverageStats(BaseModel):
     scope: str
     scope_label: str
     scope_municipalities: list[str]
+    planned_overdue_count: int = 0
+    planned_overdue: list[PlannedOverdueItem] = []
+    auto_zone_gaps_total: int = 0
+    auto_zone_gaps: list[AutoZoneGapItem] = []
