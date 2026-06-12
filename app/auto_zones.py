@@ -31,9 +31,10 @@ log = logging.getLogger(__name__)
 
 AUTO_ZONE_RADIUS_M = 150.0
 
-# Connected coverage components: buffers in LKS94 (meters), union, ST_Dump into components;
-# per component MAX speeds and dominant locality.
-# Order: largest area first (stable name suffixes).
+# Connected coverage components via ST_ClusterDBSCAN (O(n log n)) — groups points
+# whose buffers would touch (eps = 2*radius), then unions each cluster separately.
+# Much faster than ST_Union-all + ST_Dump which is O(n²) in geometry complexity.
+# Order: largest cluster (by point count) first — stable name suffixes.
 _COMPONENTS_SQL = text("""
     WITH pts AS (
         SELECT ST_Transform(a.point, 3346) AS p,
@@ -48,20 +49,24 @@ _COMPONENTS_SQL = text("""
           AND a.deleted_at IS NULL
           AND a.point IS NOT NULL
     ),
-    comps AS (
-        SELECT (ST_Dump(ST_Union(ST_Buffer(p, :radius)))).geom AS g
+    clustered AS (
+        SELECT p, dl, ul, locality,
+               ST_ClusterDBSCAN(p, eps := 2.0 * :radius, minpoints := 1) OVER () AS cid
         FROM pts
     )
     SELECT
-        ST_Multi(ST_Transform(ST_SimplifyPreserveTopology(c.g, 1.0), 4326)) AS poly,
-        ST_AsEWKT(ST_Multi(ST_Transform(ST_SimplifyPreserveTopology(c.g, 1.0), 4326))) AS poly_ewkt,
-        MAX(pt.dl) AS dl,
-        MAX(pt.ul) AS ul,
-        mode() WITHIN GROUP (ORDER BY pt.locality) AS locality
-    FROM comps c
-    JOIN pts pt ON ST_Covers(c.g, pt.p)
-    GROUP BY c.g
-    ORDER BY ST_Area(c.g) DESC
+        ST_Multi(ST_Transform(
+            ST_SimplifyPreserveTopology(ST_Union(ST_Buffer(p, :radius)), 1.0),
+            4326)) AS poly,
+        ST_AsEWKT(ST_Multi(ST_Transform(
+            ST_SimplifyPreserveTopology(ST_Union(ST_Buffer(p, :radius)), 1.0),
+            4326))) AS poly_ewkt,
+        MAX(dl) AS dl,
+        MAX(ul) AS ul,
+        mode() WITHIN GROUP (ORDER BY locality) AS locality
+    FROM clustered
+    GROUP BY cid
+    ORDER BY COUNT(*) DESC
 """)
 
 # Intersection area between an existing zone and a component (for identity matching;
