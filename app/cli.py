@@ -95,6 +95,13 @@ def import_gis(
     download: int | None = typer.Option(None, help="Override max_download_mbps"),
     upload: int | None = typer.Option(None, help="Override max_upload_mbps"),
     dry_run: bool = typer.Option(False, "--dry-run", help="Run everything, roll back at the end"),
+    mode: str = typer.Option(
+        "import", help="import = tylko dodawanie; diff = dodatkowo raport ofert osieroconych"
+    ),
+    remove_orphans: bool = typer.Option(
+        False, "--remove-orphans",
+        help="Z --mode diff: usun osierocone oferty (wycofywalna operacja bulk)",
+    ),
 ):
     """Import network coverage from GIS shapefiles as address offerings."""
     configure_logging()
@@ -107,6 +114,8 @@ def import_gis(
         download=download,
         upload=upload,
         dry_run=dry_run,
+        mode=mode,
+        remove_orphans=remove_orphans,
     )
     try:
         asyncio.run(_import_gis(options))
@@ -186,7 +195,19 @@ def _print_report(console: Console, report: ImportReport, options: ImportOptions
     table.add_row("Existing skipped", str(report.existing_skipped))
     if report.zones_rebuilt:
         table.add_row("Auto zones", ", ".join(report.zones_rebuilt))
+    if options.mode == "diff":
+        table.add_row("Orphaned offerings", f"[yellow]{len(report.orphans)}[/yellow]")
+        if options.remove_orphans:
+            table.add_row("Orphans removed", f"[red]{report.orphans_removed}[/red]")
+            if report.remove_op_id:
+                table.add_row("Rollback op id", report.remove_op_id)
     console.print(table)
+    if options.mode == "diff" and report.orphans and not options.remove_orphans:
+        console.print("[yellow]Orphaned offerings (address no longer near the network):[/yellow]")
+        for o in report.orphans[:20]:
+            console.print(f"  {o.rc_code}  {o.full_address}")
+        if len(report.orphans) > 20:
+            console.print(f"  … and {len(report.orphans) - 20} more")
 
 
 async def _create_admin(username: str, email: str) -> None:

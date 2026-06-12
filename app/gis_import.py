@@ -21,6 +21,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auto_zones import rebuild_auto_zones
 from app.database import AsyncSessionLocal
+from app.db.address_labels import _ADDR_JOINS, _FULL_ADDRESS  # noqa: F401
 from app.models.admin import BulkOperations, User
 from app.models.service import AddressOffering
 from app.models.technology import Technology
@@ -46,6 +47,14 @@ class ImportOptions:
     download: int | None = None
     upload: int | None = None
     dry_run: bool = False
+    mode: str = "import"          # 'import' | 'diff'
+    remove_orphans: bool = False  # tylko z mode='diff'
+
+
+@dataclass
+class OrphanItem:
+    rc_code: int
+    full_address: str
 
 
 @dataclass
@@ -56,6 +65,9 @@ class ImportReport:
     offerings_created: int = 0
     existing_skipped: int = 0
     zones_rebuilt: list[str] = field(default_factory=list)
+    orphans: list[OrphanItem] = field(default_factory=list)
+    orphans_removed: int = 0
+    remove_op_id: str | None = None
 
 
 def read_geometries(path: Path) -> tuple[list[str], int]:
@@ -147,6 +159,46 @@ async def match_addresses(session: AsyncSession, distance: float) -> list[int]:
         {"distance": distance},
     )
     return [row[0] for row in result]
+
+
+async def find_orphans(
+    session: AsyncSession, tech_id: uuid.UUID, distance: float
+) -> list[OrphanItem]:
+    """Oferty technologii, ktorych adres lezy DALEJ niz `distance` od sieci.
+
+    Wymaga zaladowanej temp-tabeli gis_import_geom (load_temp_geometries).
+    """
+    result = await session.execute(
+        text(
+            f"""
+            SELECT a.rc_code, ({_FULL_ADDRESS}) AS full_address
+            FROM address_offerings ao
+            JOIN addresses a ON a.rc_code = ao.address_code
+            {_ADDR_JOINS}
+            WHERE ao.technology_id = :tech_id
+              AND a.deleted_at IS NULL
+              AND a.point IS NOT NULL
+              AND NOT EXISTS (
+                SELECT 1 FROM gis_import_geom g
+                WHERE ST_DWithin(ST_Transform(a.point, 3346), g.geom, :distance)
+              )
+            ORDER BY a.rc_code
+            """
+        ),
+        {"tech_id": str(tech_id), "distance": distance},
+    )
+    return [OrphanItem(rc_code=int(r[0]), full_address=str(r[1])) for r in result]
+
+
+async def remove_orphan_offerings(
+    session: AsyncSession,
+    tech: Technology,
+    user_id: uuid.UUID,
+    orphans: list[OrphanItem],
+    options: ImportOptions,
+) -> tuple[int, str]:
+    """Usuwa osierocone oferty jako wycofywalna operacje bulk. Patrz Task 3."""
+    raise NotImplementedError
 
 
 async def resolve_technology(session: AsyncSession, variant_code: str) -> Technology:
@@ -268,6 +320,15 @@ async def _run_db_steps(
         report.offerings_created,
         report.existing_skipped,
     )
+    if options.mode == "diff":
+        progress("Finding orphaned offerings")
+        report.orphans = await find_orphans(session, tech.id, options.distance)
+        log.info("Found %d orphaned offerings", len(report.orphans))
+        if options.remove_orphans and report.orphans:
+            progress("Removing orphaned offerings")
+            report.orphans_removed, report.remove_op_id = await remove_orphan_offerings(
+                session, tech, user.id, report.orphans, options
+            )
     progress("Rebuilding auto zones")
     report.zones_rebuilt = await rebuild_auto_zones(session, tech.id)
     return report
@@ -284,6 +345,10 @@ async def run_import(
         raise GisImportError(
             f"Invalid status '{options.status}'. Valid: {', '.join(sorted(VALID_STATUSES))}"
         )
+    if options.mode not in ("import", "diff"):
+        raise GisImportError(f"Invalid mode '{options.mode}'. Valid: import, diff")
+    if options.remove_orphans and options.mode != "diff":
+        raise GisImportError("--remove-orphans requires --mode diff")
 
     progress("Reading shapefiles")
     report = ImportReport()
