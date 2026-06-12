@@ -197,8 +197,43 @@ async def remove_orphan_offerings(
     orphans: list[OrphanItem],
     options: ImportOptions,
 ) -> tuple[int, str]:
-    """Usuwa osierocone oferty jako wycofywalna operacje bulk. Patrz Task 3."""
-    raise NotImplementedError
+    """Usuwa osierocone oferty jako wycofywalna operacje bulk.
+
+    Reuzywa sciezki remove z bulk API — identyczny rollback_data, wiec
+    POST /api/v1/admin/bulk/{id}/rollback przywraca skasowane oferty.
+    Importy na poziomie funkcji: bulk.py ciagnie caly stack FastAPI,
+    niepotrzebny przy zwyklym imporcie CLI.
+    """
+    from app.api.v1.admin.bulk import _execute_remove_offering
+    from app.schemas.admin import RemoveOfferingOperation
+
+    bulk_op = BulkOperations(
+        user_id=user_id,
+        operation_type="gis_import_remove_orphans",
+        filter_criteria={
+            "shapefiles": [str(p) for p in options.shapefiles],
+            "technology": options.technology,
+            "distance_m": options.distance,
+            "orphan_count": len(orphans),
+        },
+        affected_count=0,
+    )
+    session.add(bulk_op)
+    await session.flush()
+
+    op = RemoveOfferingOperation(type="remove_offering", technology_id=tech.id)
+    deleted_codes, deleted_data = await _execute_remove_offering(
+        session, bulk_op.id, user_id, op, [o.rc_code for o in orphans], tech.display_name
+    )
+    bulk_op.rollback_data = {
+        "type": "remove_offering",
+        "technology_id": str(tech.id),
+        "deleted_offerings": deleted_data,
+    }
+    bulk_op.affected_count = len(deleted_codes)
+    await session.flush()
+    log.info("Removed %d orphaned offerings (bulk op %s)", len(deleted_codes), bulk_op.id)
+    return len(deleted_codes), str(bulk_op.id)
 
 
 async def resolve_technology(session: AsyncSession, variant_code: str) -> Technology:

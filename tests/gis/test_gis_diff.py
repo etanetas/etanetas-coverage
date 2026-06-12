@@ -103,3 +103,50 @@ async def test_import_mode_skips_orphan_detection(db_session: AsyncSession) -> N
     )
 
     assert report.orphans == []
+
+
+async def test_remove_orphans_deletes_with_rollback_data(db_session: AsyncSession) -> None:
+    await _seed_addresses(db_session)
+    tech, user = await _seed_tech_and_user(db_session)
+    await _add_offering(db_session, ADDR_FAR, tech.id, user.id)
+
+    report = await _run_db_steps(
+        db_session, _options(remove_orphans=True), [TEST_LINE], ImportReport(), lambda s: None
+    )
+
+    assert report.orphans_removed == 1
+    assert report.remove_op_id is not None
+    count = (
+        await db_session.execute(
+            text("SELECT count(*) FROM address_offerings WHERE address_code = :rc"),
+            {"rc": ADDR_FAR},
+        )
+    ).scalar()
+    assert count == 0
+    # Operacja bulk w formacie zgodnym z POST /bulk/{id}/rollback.
+    row = (
+        await db_session.execute(
+            text(
+                "SELECT operation_type, affected_count, rollback_data "
+                "FROM bulk_operations WHERE id = CAST(:id AS uuid)"
+            ),
+            {"id": report.remove_op_id},
+        )
+    ).one()
+    assert row.operation_type == "gis_import_remove_orphans"
+    assert row.affected_count == 1
+    assert row.rollback_data["type"] == "remove_offering"
+    assert row.rollback_data["technology_id"] == str(tech.id)
+    deleted = row.rollback_data["deleted_offerings"]
+    assert len(deleted) == 1
+    assert deleted[0]["address_code"] == ADDR_FAR
+    assert deleted[0]["status"] == "available"
+
+
+async def test_remove_orphans_requires_diff_mode() -> None:
+    import pytest as _pytest
+
+    from app.gis_import import GisImportError, run_import
+
+    with _pytest.raises(GisImportError, match="remove-orphans"):
+        await run_import(_options(mode="import", remove_orphans=True))
